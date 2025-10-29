@@ -3,10 +3,8 @@ import os
 import time
 import random
 
-datasets = [
-    "G-list/floor_plan_kaggle", 
+datasets = [ 
     "HamzaWajid1/FloorPlans970Dataset", 
-    "FahadIqbal5188/floorplan-SDXL", 
 ]
 
 def download_datasets():
