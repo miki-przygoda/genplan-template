@@ -34,7 +34,7 @@ except ImportError:  # pragma: no cover - pillow is listed in requirements
 DEFAULT_DATASET_NAME = "HamzaWajid1/FloorPlans970Dataset"
 DEFAULT_LOCAL_DATASET_PATH = Path("dataset") / "FloorPlans970Dataset"
 DEFAULT_PROCESSED_DIR = Path("processed")
-DEFAULT_NO_TEXT_PATH = Path("pro") / "no_text_ids.json"
+DEFAULT_NO_TEXT_PATH = Path("processed") / "no_text_ids.json"
 EXPECTED_IMAGE_SHAPE = (512, 512)
 
 DATASETS = ["HamzaWajid1/FloorPlans970Dataset"]
