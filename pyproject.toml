@@ -9,10 +9,13 @@ description = "Template for generative AI floor plan research"
 requires-python = ">=3.11"
 dependencies = [
     "datasets>=4.3.0",
-    "huggingface-hub>=0.36.0",
-    "pandas>=2.3.3",
+    "huggingface-hub>=1.0.1",
+    "matplotlib>=3.10.1",
+    "numpy>=2.1.3",
+    "opencv-python>=4.12.0.88",
+    "pandas>=2.2.3",
+    "pillow>=11.1.0",
     "pyarrow>=22.0.0",
-    "numpy>=2.3.3"
 ]
 
 [tool.pylsp-mypy]
