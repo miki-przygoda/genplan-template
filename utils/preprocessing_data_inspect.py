@@ -62,10 +62,14 @@ def load_floorplans_dataset(
         dataset_path = DEFAULT_LOCAL_DATASET_PATH
 
     dataset: Dataset | DatasetDict
-    if dataset_path.exists() and any(dataset_path.iterdir()):
+    try:
         dataset = load_from_disk(str(dataset_path))
-    else:
+    except Exception as e:
+        print(f"Error loading dataset from disk: {e}")
+        print("Falling back to Hugging Face Hub")
         dataset = load_dataset(dataset_name, verification_mode="no_checks")
+        dataset.save_to_disk(str(dataset_path))
+
 
     if isinstance(dataset, DatasetDict):
         if split is not None and split in dataset:
