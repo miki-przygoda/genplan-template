@@ -1,11 +1,13 @@
-from datasets.packaged_modules.imagefolder.imagefolder import IMAGE_EXTENSIONS
-from preprocessing_data_inspect import load_floorplans_dataset
+import json
+import re
+from pathlib import Path
+from typing import Any, Dict
 
-import random
-import os
-import matplotlib.pyplot as plt
+from PIL import Image
 import numpy as np
 import cv2 as cv
+
+from preprocessing_data_extract import load_floorplans_dataset
 
 
 def extract_room_polygons(pil_image, min_area_ratio: float = 0.001, corner_quality: float = 0.01):
@@ -122,56 +124,91 @@ def colourise_rooms(rgb_image: np.ndarray, room_polygons, corner_points):
     return overlay, blended
 
 
-def plot_results(original: np.ndarray, mask: np.ndarray, overlay: np.ndarray, blended: np.ndarray):
-    """Visual helper to check segmentation quality during experimentation."""
+def _derive_record_identifier(record: Dict[str, Any], index: int) -> str:
+    """Return a stable identifier for a dataset record."""
+    for key in ("image_id", "plan_id", "id", "file_name", "filename"):
+        value = record.get(key)
+        if value is None:
+            continue
+        if isinstance(value, str) and value.strip():
+            return value
+        return str(value)
+    return f"sample_{index:05d}"
 
-    plt.figure(figsize=(12, 8))
-    plt.subplot(2, 2, 1)
-    plt.imshow(original)
-    plt.title("Original")
-    plt.axis("off")
 
-    plt.subplot(2, 2, 2)
-    plt.imshow(mask, cmap="gray")
-    plt.title("Room Mask")
-    plt.axis("off")
+def _normalise_identifier(identifier: str) -> str:
+    """Sanitise identifier for safe file naming."""
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", identifier).strip("._-")
+    return cleaned or "sample"
 
-    plt.subplot(2, 2, 3)
-    plt.imshow(overlay)
-    plt.title("Room Overlay")
-    plt.axis("off")
 
-    plt.subplot(2, 2, 4)
-    plt.imshow(blended)
-    plt.title("Blended")
-    plt.axis("off")
-
-    plt.tight_layout()
-    plt.show()
+def _prepare_room_metadata(raw_metadata):
+    """Convert metadata into JSON-serialisable form."""
+    serialisable = []
+    for room in raw_metadata:
+        room_entry = {
+            "room_id": int(room["room_id"]),
+            "area_px": int(room["area_px"]),
+            "polygon": [list(vertex) for vertex in room["polygon"]],
+            "centroid": list(room["centroid"]),
+            "corner_ids": [int(corner_id) for corner_id in room["corner_ids"]],
+        }
+        serialisable.append(room_entry)
+    return serialisable
 
 
 def main():
-    os.system("clear")
-
     dataset = load_floorplans_dataset()
-    seed = random.randint(0, len(dataset) - 1)
-    print(f"Using sample index: {seed}")
+    output_dir = Path("processed") / "floor_plans"
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    pil_image = dataset[seed]["image"]
-    mask, room_polygons, metadata, corner_points = extract_room_polygons(pil_image)
+    total_records = len(dataset)
+    print(f"Processing {total_records} floorplan samples into {output_dir}...")
 
-    rgb_image = np.array(pil_image.convert("RGB"))
-    overlay, blended = colourise_rooms(rgb_image, room_polygons, corner_points)
+    for index, record in enumerate(dataset):
+        image = record.get("image")
+        if image is None:
+            print(f"Skipping record {index}: no image found.")
+            continue
 
-    print("Extracted room metadata:")
-    for room in metadata:
-        print(room)
+        pil_image = image.convert("RGB")
+        mask, room_polygons, metadata, corner_points = extract_room_polygons(pil_image)
+        rgb_image = np.array(pil_image)
+        _, blended = colourise_rooms(rgb_image, room_polygons, corner_points)
 
-    print("Detected corners:")
-    for corner_id, point in enumerate(corner_points):
-        print({"corner_id": corner_id, "point": point})
+        identifier = _normalise_identifier(_derive_record_identifier(record, index))
+        room_id = index + 1  # keep human-friendly indexing
 
-    plot_results(rgb_image, mask, overlay, blended)
+        sample_dir = output_dir / f"room{room_id:03d}"
+        sample_dir.mkdir(parents=True, exist_ok=True)
+
+        mask_path = sample_dir / "room_mask.png"
+        overlay_path = sample_dir / "overlay.png"
+        json_path = sample_dir / "metadata.json"
+
+        Image.fromarray(mask.astype(np.uint8)).save(mask_path)
+        Image.fromarray(blended).save(overlay_path)
+
+        payload = {
+            "identifier": identifier,
+            "record_index": index,
+            "room_folder": sample_dir.name,
+            "image_size": {"width": int(rgb_image.shape[1]), "height": int(rgb_image.shape[0])},
+            "room_count": len(metadata),
+            "rooms": _prepare_room_metadata(metadata),
+            "corner_points": [list(point) for point in corner_points],
+            "generated_files": {
+                "room_mask_png": mask_path.name,
+                "overlay_png": overlay_path.name,
+                "metadata_json": json_path.name,
+            },
+        }
+
+        with json_path.open("w", encoding="utf-8") as metadata_file:
+            json.dump(payload, metadata_file, indent=2)
+
+        if (index + 1) % 25 == 0 or index == total_records - 1:
+            print(f"Processed {index + 1}/{total_records} samples")
 
 
 if __name__ == "__main__":
