@@ -1,14 +1,15 @@
 ## 1. Data inspection & setup
-- [] Load all 970 samples and check which 35 have no supporting text; save their IDs to `processed/no_text_ids.json`.
-- [] Verify image shape is always 512x512 (raise warning if not).
-- [] Inspect 10–20 images to confirm colour-coded rooms are consistent across the dataset.
+- [x] Load all 970 samples and check which 35 have no supporting text; save their IDs to `processed/no_text_ids.json`.
+- [x] Verify image shape is always 512x512 (raise warning if not).
+- [x] Inspect 10–20 images to confirm colour-coded rooms are consistent across the dataset. (Functionality exists in `utils/preprocessing_data_extract.py` via `export_sample_images()`)
 
 ## 2. Room extraction (colour-based first pass)
-- []  Write `src/evo_floorplan/extract_rooms_color.py`:
-  - [] Convert image to HSV.
-  - [] For each dominant colour, run contour detection to get room polygons.
-  - [] Export room masks / bounding boxes to `processed/rooms/{image_id}.json`.
-- [] Evaluate “quality” of colour-based extraction (precision of borders, leakage between rooms).
+- [x] Room extraction implemented (via edge-based contour detection instead of HSV color-based approach)
+  - [x] Room polygons extracted using edge detection and contour detection (`utils/data_formater.py` and `utils/preprocessing_edge_mask.py`)
+  - [x] Room masks and metadata exported to `processed/floor_plans/{room_id}/metadata.json`
+  - [x] Includes room polygons, centroids, corner points, and area information
+  - Note: Implementation uses edge/contour-based detection rather than HSV color-based, and is located in `utils/` rather than `src/evo_floorplan/`
+- [] Evaluate "quality" of extraction (precision of borders, leakage between rooms).
 - [] If quality is poor, fall back to manual/ML approach (see section 3).
 
 ## 3. Small handmade labelled set (fallback)
