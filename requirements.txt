@@ -19,6 +19,7 @@ idna==3.11
 multidict==6.7.0
 multiprocess==0.70.16
 numpy==2.3.3
+opencv-python==4.10.0.84
 packaging==25.0
 pandas==2.3.3
 pillow==11.3.0
