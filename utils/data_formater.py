@@ -36,6 +36,7 @@ DEFAULT_LOCAL_DATASET_PATH = Path("dataset") / "FloorPlans970Dataset"
 DEFAULT_PROCESSED_DIR = Path("processed")
 DEFAULT_NO_TEXT_PATH = Path("processed") / "no_text_ids.json"
 EXPECTED_IMAGE_SHAPE = (512, 512)
+SCHEMA_VERSION = "1.0.0"
 
 DATASETS = ["HamzaWajid1/FloorPlans970Dataset"]
 
@@ -325,6 +326,128 @@ def write_json(path: Path, data: Any) -> None:
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
 
 
+def _parse_version(version_str: str) -> tuple[int, int, int]:
+    """Parse version string like '1.0.0' into (major, minor, patch) tuple."""
+    parts = version_str.split(".")
+    major = int(parts[0]) if len(parts) > 0 and parts[0].isdigit() else 0
+    minor = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+    patch = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
+    return (major, minor, patch)
+
+
+def _compare_versions(version1: str, version2: str) -> int:
+    """
+    Compare two version strings.
+    Returns: -1 if version1 < version2, 0 if equal, 1 if version1 > version2
+    """
+    v1 = _parse_version(version1)
+    v2 = _parse_version(version2)
+    if v1 < v2:
+        return -1
+    elif v1 > v2:
+        return 1
+    return 0
+
+
+def write_versioned_metadata_json(json_path: Path, payload: Dict[str, Any]) -> None:
+    """
+    Write metadata.json with versioning support.
+    
+    - Adds schema_version at the very top of the JSON
+    - If the file exists with the same version, overwrites it
+    - If the file exists with an older version, backs it up as metadata.v{old_version}.json
+    - Keeps maximum 2 old versions (removes older ones)
+    """
+    # Add schema_version at the very top of the payload
+    payload_with_version = {"schema_version": SCHEMA_VERSION, **payload}
+    
+    json_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Check if file exists and read existing version if present
+    existing_version = None
+    if json_path.exists():
+        try:
+            with json_path.open("r", encoding="utf-8") as f:
+                existing_data = json.load(f)
+                existing_version = existing_data.get("schema_version")
+        except (json.JSONDecodeError, IOError):
+            # If we can't read it, treat as if it doesn't exist
+            existing_version = None
+    
+    if existing_version is None:
+        # No existing file or couldn't read version - just write new file
+        with json_path.open("w", encoding="utf-8") as metadata_file:
+            json.dump(payload_with_version, metadata_file, indent=2, ensure_ascii=False)
+            metadata_file.write("\n")
+    else:
+        # Compare versions
+        version_comparison = _compare_versions(existing_version, SCHEMA_VERSION)
+        
+        if version_comparison == 0:
+            # Same version - overwrite
+            with json_path.open("w", encoding="utf-8") as metadata_file:
+                json.dump(payload_with_version, metadata_file, indent=2, ensure_ascii=False)
+                metadata_file.write("\n")
+        elif version_comparison < 0:
+            # Existing version is older - backup and create new
+            # Normalize version for filename (replace dots with underscores for safety)
+            version_filename = existing_version.replace(".", "_")
+            backup_path = json_path.parent / f"metadata.v{version_filename}.json"
+            
+            # If backup already exists, remove it first (shouldn't happen, but handle it)
+            if backup_path.exists():
+                backup_path.unlink()
+            
+            # Move existing file to backup
+            json_path.rename(backup_path)
+            
+            # Write new file
+            with json_path.open("w", encoding="utf-8") as metadata_file:
+                json.dump(payload_with_version, metadata_file, indent=2, ensure_ascii=False)
+                metadata_file.write("\n")
+            
+            # Clean up old backups - keep only 2 most recent
+            _cleanup_old_metadata_backups(json_path.parent)
+        else:
+            # Existing version is newer - this shouldn't happen, but handle gracefully
+            # Create a backup with current version and warn
+            version_filename = SCHEMA_VERSION.replace(".", "_")
+            backup_path = json_path.parent / f"metadata.v{version_filename}.json"
+            
+            # If current version backup doesn't exist, create it
+            if not backup_path.exists():
+                with backup_path.open("w", encoding="utf-8") as backup_file:
+                    json.dump(payload_with_version, backup_file, indent=2, ensure_ascii=False)
+                    backup_file.write("\n")
+            
+            # Don't overwrite the newer version file
+            print(f"Warning: Existing metadata.json has newer version {existing_version} than current {SCHEMA_VERSION}. Keeping existing file.")
+
+
+def _cleanup_old_metadata_backups(directory: Path) -> None:
+    """
+    Keep only the 2 most recent metadata backup files.
+    Removes older backup files to maintain at most 2 versions behind.
+    """
+    # Find all metadata backup files (metadata.v*.json)
+    backup_files = list(directory.glob("metadata.v*.json"))
+    
+    if len(backup_files) <= 2:
+        # We have 2 or fewer backups, no cleanup needed
+        return
+    
+    # Sort by modification time (newest first)
+    backup_files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    
+    # Keep the 2 most recent, delete the rest
+    for old_backup in backup_files[2:]:
+        try:
+            old_backup.unlink()
+        except OSError:
+            # If we can't delete it, continue with others
+            pass
+
+
 # ============================================================================
 # Main Workflow
 # ============================================================================
@@ -494,8 +617,8 @@ def process_dataset(
         if supporting_text is not None:
             payload = {"supporting_text": supporting_text, **payload}
 
-        with json_path.open("w", encoding="utf-8") as metadata_file:
-            json.dump(payload, metadata_file, indent=2)
+        # Write metadata with versioning support
+        write_versioned_metadata_json(json_path, payload)
 
         if (index + 1) % 25 == 0 or index == total_records - 1:
             print(f"Processed {index + 1}/{total_records} samples")
