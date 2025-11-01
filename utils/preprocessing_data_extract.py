@@ -25,7 +25,7 @@ except ImportError:  # pragma: no cover - pillow is listed in requirements
 DEFAULT_DATASET_NAME = "HamzaWajid1/FloorPlans970Dataset"
 DEFAULT_LOCAL_DATASET_PATH = Path("dataset") / "FloorPlans970Dataset"
 DEFAULT_PROCESSED_DIR = Path("processed")
-DEFAULT_NO_TEXT_PATH = Path("dataset") / "no_text_ids.json"
+DEFAULT_NO_TEXT_PATH = Path("processed") / "no_text_ids.json"
 EXPECTED_IMAGE_SHAPE = (512, 512)
 
 PREFERRED_TEXT_COLUMNS: Sequence[str] = (
@@ -115,8 +115,8 @@ def detect_missing_text_records(
             is_missing = False
 
         if is_missing:
-            identifier = record.get(id_column, idx) if id_column else idx
-            missing_ids.append(identifier)
+            # Always use 0-based index to match usage in data_formater.py
+            missing_ids.append(idx)
 
     return missing_ids
 

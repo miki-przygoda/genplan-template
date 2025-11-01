@@ -34,7 +34,7 @@ except ImportError:  # pragma: no cover - pillow is listed in requirements
 DEFAULT_DATASET_NAME = "HamzaWajid1/FloorPlans970Dataset"
 DEFAULT_LOCAL_DATASET_PATH = Path("dataset") / "FloorPlans970Dataset"
 DEFAULT_PROCESSED_DIR = Path("processed")
-DEFAULT_NO_TEXT_PATH = Path("dataset") / "no_text_ids.json"
+DEFAULT_NO_TEXT_PATH = Path("pro") / "no_text_ids.json"
 EXPECTED_IMAGE_SHAPE = (512, 512)
 
 DATASETS = ["HamzaWajid1/FloorPlans970Dataset"]
@@ -352,8 +352,9 @@ def process_dataset(
     if output_dir is None:
         output_dir = DEFAULT_PROCESSED_DIR / "floor_plans"
     
-    # Step 1: Download dataset if needed
-    if force_download or not (dataset_path or DEFAULT_LOCAL_DATASET_PATH).exists():
+    # Step 1: Download dataset if needed (only if missing, not forced unless specified)
+    dataset_path_to_check = dataset_path or DEFAULT_LOCAL_DATASET_PATH
+    if force_download or not dataset_path_to_check.exists():
         print("=" * 50)
         print("Step 1: Downloading dataset...")
         print("=" * 50)
@@ -379,14 +380,58 @@ def process_dataset(
         resolved_image_column = "image"
         print(f"Warning: Could not resolve image column, using '{resolved_image_column}'")
     
+    # Resolve text column
+    try:
+        resolved_text_column = resolve_column(
+            dataset.column_names, PREFERRED_TEXT_COLUMNS
+        )
+    except DataInspectionError:
+        resolved_text_column = None
+        print(f"Warning: Could not resolve text column, supporting text will not be included")
+    
+    # Step 2.5: Regenerate no_text_ids.json
+    print("=" * 50)
+    print("Step 2.5: Regenerating no_text_ids.json...")
+    print("=" * 50)
+    no_text_ids = set()
+    if resolved_text_column:
+        for idx, record in enumerate(dataset):
+            text_value = record.get(resolved_text_column)
+            is_missing = False
+            
+            if text_value is None:
+                is_missing = True
+            elif isinstance(text_value, str):
+                is_missing = text_value.strip() == ""
+            elif isinstance(text_value, (list, tuple, set)):
+                is_missing = all((not item or str(item).strip() == "") for item in text_value)
+            
+            if is_missing:
+                # Use 1-based ID to match floor numbering (floor001, floor002, etc.)
+                floor_id = idx + 1
+                no_text_ids.add(floor_id)
+        
+        # Save to processed/no_text_ids.json
+        no_text_output_path = Path("processed") / "no_text_ids.json"
+        no_text_output_path.parent.mkdir(parents=True, exist_ok=True)
+        write_json(no_text_output_path, sorted(list(no_text_ids)))
+        print(f"Regenerated no_text_ids.json with {len(no_text_ids)} records without text")
+        print(f"Saved to: {no_text_output_path}")
+    else:
+        print("Skipping no_text_ids.json generation: text column not available")
+    print()
+    
     print(f"Loaded dataset with {len(dataset)} records")
     print(f"Using image column: '{resolved_image_column}'")
+    if resolved_text_column:
+        print(f"Using text column: '{resolved_text_column}'")
     print()
     
     # Step 3: Process images and create masks
     print("=" * 50)
     print("Step 3: Processing images and creating masks...")
     print("=" * 50)
+    print("Note: All existing files will be overwritten.")
     output_dir.mkdir(parents=True, exist_ok=True)
     
     total_records = len(dataset)
@@ -404,9 +449,9 @@ def process_dataset(
         _, blended = colourise_rooms(rgb_image, room_polygons, corner_points)
 
         identifier = _normalise_identifier(_derive_record_identifier(record, index))
-        room_id = index + 1  # keep human-friendly indexing
+        floor_id = index + 1  # 1-based indexing for floor plans
 
-        sample_dir = output_dir / f"room{room_id:03d}"
+        sample_dir = output_dir / f"floor{floor_id:03d}"
         sample_dir.mkdir(parents=True, exist_ok=True)
 
         mask_path = sample_dir / "room_mask.png"
@@ -416,10 +461,24 @@ def process_dataset(
         Image.fromarray(mask.astype(np.uint8)).save(mask_path)
         Image.fromarray(blended).save(overlay_path)
 
+        # Extract supporting text if available and this record has text
+        supporting_text = None
+        if resolved_text_column and floor_id not in no_text_ids:
+            text_value = record.get(resolved_text_column)
+            if text_value is not None:
+                if isinstance(text_value, str) and text_value.strip():
+                    supporting_text = text_value.strip()
+                elif isinstance(text_value, (list, tuple)) and len(text_value) > 0:
+                    # Handle list of strings
+                    text_str = " ".join(str(item).strip() for item in text_value if item)
+                    if text_str.strip():
+                        supporting_text = text_str.strip()
+
         payload = {
             "identifier": identifier,
             "record_index": index,
-            "room_folder": sample_dir.name,
+            "floor_id": floor_id,
+            "floor_folder": sample_dir.name,
             "image_size": {"width": int(rgb_image.shape[1]), "height": int(rgb_image.shape[0])},
             "room_count": len(metadata),
             "rooms": _prepare_room_metadata(metadata),
@@ -430,6 +489,10 @@ def process_dataset(
                 "metadata_json": json_path.name,
             },
         }
+        
+        # Add supporting_text at the top if available
+        if supporting_text is not None:
+            payload = {"supporting_text": supporting_text, **payload}
 
         with json_path.open("w", encoding="utf-8") as metadata_file:
             json.dump(payload, metadata_file, indent=2)
