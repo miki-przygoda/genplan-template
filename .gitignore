@@ -62,8 +62,8 @@ Temporary Items
 .apdisk
 
 # Dataset files (large files)
-dataset/
-processed/
+backend/data/dataset/
+backend/data/processed/
 *.parquet
 *.arrow
 
