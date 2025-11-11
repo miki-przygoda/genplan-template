@@ -159,7 +159,7 @@ def _prepare_room_metadata(raw_metadata):
 
 def main():
     dataset = load_floorplans_dataset()
-    output_dir = Path("backend") / "processed" / "floor_plans"
+    output_dir = Path("backend") / "data" / "processed" / "floor_plans"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     total_records = len(dataset)

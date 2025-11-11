@@ -32,9 +32,9 @@ except ImportError:  # pragma: no cover - pillow is listed in requirements
 
 # Constants
 DEFAULT_DATASET_NAME = "HamzaWajid1/FloorPlans970Dataset"
-DEFAULT_LOCAL_DATASET_PATH = Path("backend") / "dataset" / "FloorPlans970Dataset"
-DEFAULT_PROCESSED_DIR = Path("backend") / "processed"
-DEFAULT_NO_TEXT_PATH = Path("backend") / "processed" / "no_text_ids.json"
+DEFAULT_LOCAL_DATASET_PATH = Path("backend") / "data" / "dataset" / "FloorPlans970Dataset"
+DEFAULT_PROCESSED_DIR = Path("backend") / "data" / "processed"
+DEFAULT_NO_TEXT_PATH = Path("backend") / "data" / "processed" / "no_text_ids.json"
 EXPECTED_IMAGE_SHAPE = (512, 512)
 SCHEMA_VERSION = "1.0.0"
 
@@ -70,11 +70,11 @@ def download_datasets():
     based on the dataset name (second part of the repository path).
     Includes rate limiting protection with random delays.
     """
-    os.makedirs("backend/dataset", exist_ok=True)
+    os.makedirs("backend/data/dataset", exist_ok=True)
     
     for i, dataset_path in enumerate(DATASETS):
         dataset_name = dataset_path.split("/")[-1]
-        dataset_folder = os.path.join("backend", "dataset", dataset_name)
+        dataset_folder = os.path.join("backend", "data", "dataset", dataset_name)
         
         print(f"Downloading {dataset_path}...")
         print(f"Creating folder: {dataset_folder}")
@@ -662,7 +662,7 @@ def parse_args() -> argparse.Namespace:
         "--output-dir",
         type=Path,
         default=None,
-        help="Directory to save processed floor plans (default: backend/processed/floor_plans).",
+        help="Directory to save processed floor plans (default: backend/data/processed/floor_plans).",
     )
     parser.add_argument(
         "--force-download",

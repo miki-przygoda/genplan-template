@@ -1,6 +1,6 @@
 # TODO:
 """ - cannonical format for the layout constraints
-Read backend/processed/floor_plans/floor001/metadata.json
+Read backend/data/processed/floor_plans/floor001/metadata.json
 iterate through each floor's metadata.json
 for each floor generate a layout contrainst file - json file
 It should contain the following:
@@ -31,8 +31,8 @@ It should contain the following:
 }
 
 
-- output file should be saved in backend/processed/layout_constraints/floor{id}.json
-if the id is inside of backend/processed/no_text_ids.json, then the json file should be empty
+- output file should be saved in backend/data/processed/layout_constraints/floor{id}.json
+if the id is inside of backend/data/processed/no_text_ids.json, then the json file should be empty
 
 - extracts what it can (image size, room count, supporting_text) from the metadata.json
 if there is supporting text, calls the text parser to extract the rooms and their relationships
