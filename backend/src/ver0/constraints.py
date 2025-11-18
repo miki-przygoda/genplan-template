@@ -1,8 +1,11 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List, Tuple
+
 import numpy as np
+
 from .grid_encoder import GridSample, RoomSpec
+from .vars import DEFAULT_GRID_SIZE
 
 Cell = tuple[int, int]  # (r, c)
 
@@ -20,7 +23,7 @@ class ConstraintScores:
     adjacency: float
 
 # ---------- helpers ----------
-def quadrant_of_cell(rc: Cell, grid_size: int = 4) -> str:
+def quadrant_of_cell(rc: Cell, grid_size: int = DEFAULT_GRID_SIZE) -> str:
     r, c = rc
     ns = "N" if r < grid_size // 2 else "S"
     ew = "W" if c < grid_size // 2 else "E"
@@ -66,7 +69,7 @@ def quadrant_penalty(sample: GridSample, cand: CandidateLayout) -> float:
                 total += manhattan(ctr, q_center)
     return total
 
-def overlap_penalty(cand: CandidateLayout, grid_size: int = 4) -> float:
+def overlap_penalty(cand: CandidateLayout, grid_size: int = DEFAULT_GRID_SIZE) -> float:
     occ = np.zeros((grid_size, grid_size), dtype=int)
     for cells in cand.placement.values():
         for (r, c) in cells:

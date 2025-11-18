@@ -5,6 +5,8 @@ from typing import Optional, List, Tuple, Dict
 import json
 import numpy as np
 
+from .vars import DEFAULT_GRID_SIZE
+
 Section = str
 
 @dataclass
@@ -27,20 +29,20 @@ def _load_metadata(floor_dir: Path) -> dict:
 def _room_name(room: dict) -> str:
     return f"room_{room['room_id']}"
 
-def _centroid_to_cell(centroid: Tuple[int,int], img_wh=(512,512), grid_size=4) -> Tuple[int,int]:
+def _centroid_to_cell(centroid: Tuple[int, int], img_wh=(512, 512), grid_size=DEFAULT_GRID_SIZE) -> Tuple[int, int]:
     x, y = centroid
     w, h = img_wh
     c = min(grid_size-1, max(0, int(x * grid_size / w)))
     r = min(grid_size-1, max(0, int(y * grid_size / h)))
     return (r, c)
 
-def _cell_to_section(rc: Tuple[int,int], grid_size=4) -> Section:
+def _cell_to_section(rc: Tuple[int, int], grid_size=DEFAULT_GRID_SIZE) -> Section:
     r, c = rc
     ns = "N" if r < grid_size//2 else "S"
     ew = "W" if c < grid_size//2 else "E"
     return f"{ns}{ew}"
 
-def _area_to_min_cells(area_px: int, img_wh=(512,512), grid_size=4) -> int:
+def _area_to_min_cells(area_px: int, img_wh=(512, 512), grid_size=DEFAULT_GRID_SIZE) -> int:
     total_px = img_wh[0]*img_wh[1]
     ratio = area_px / total_px
     if ratio < 0.04: return 1
@@ -50,7 +52,7 @@ def _area_to_min_cells(area_px: int, img_wh=(512,512), grid_size=4) -> int:
 def _text_section_override(name_to_text_section: Dict[str, Section], name: str, fallback: Section) -> Section:
     return name_to_text_section.get(name, fallback)
 
-def _make_target_mask(centroid_cells: List[Tuple[int,int]], grid_size=4) -> np.ndarray:
+def _make_target_mask(centroid_cells: List[Tuple[int, int]], grid_size=DEFAULT_GRID_SIZE) -> np.ndarray:
     mask = np.zeros((grid_size, grid_size), dtype=np.uint8)
     for (r,c) in centroid_cells:
         mask[r, c] = 1
@@ -59,7 +61,7 @@ def _make_target_mask(centroid_cells: List[Tuple[int,int]], grid_size=4) -> np.n
 # ------------ main API ------------
 def encode_floorplan_to_grid(
     floor_dir: Path,
-    grid_size: int = 4,
+    grid_size: int = DEFAULT_GRID_SIZE,
     *,
     name_to_text_section: Optional[Dict[str, Section]] = None,  # from parser (optional)
 ) -> GridSample:
