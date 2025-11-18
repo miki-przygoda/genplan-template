@@ -1,97 +1,132 @@
+# FloorPlanEA — v0 Development Roadmap
+
+This roadmap reflects the final scope for **v0 (coursework submission)** and marks
+any items postponed to post-coursework development (hybrid EA/RL, 2×2 encoder, etc.).
+
+---
+
 ## 1. Data inspection & setup
-- [x] Load all 970 samples and check which 35 have no supporting text; save their IDs to `backend/data/processed/no_text_ids.json`.
-- [x] Verify image shape is always 512x512 (raise warning if not).
-- [x] Inspect 10–20 images to confirm colour-coded rooms are consistent across the dataset. (Functionality exists in `utils/preprocessing_data_extract.py` via `export_sample_images()`)
+- [x] Load all 970 samples and identify the 35 with no supporting text.
+- [x] Save IDs to `backend/data/processed/no_text_ids.json`.
+- [x] Verify image shapes (512×512).
+- [x] Manually inspect 10–20 images (mask export enabled).
+- [ ] Final pass: evaluate room extraction quality (quick visual + spot-check metadata).
 
-## 2. Room extraction (colour-based first pass)
-- [x] Room extraction implemented (via edge-based contour detection instead of HSV color-based approach)
-  - [x] Room polygons extracted using edge detection and contour detection (`utils/data_formater.py` and `utils/preprocessing_edge_mask.py`)
-  - [x] Room masks and metadata exported to `backend/data/processed/floor_plans/{room_id}/metadata.json`
-  - [x] Includes room polygons, centroids, corner points, and area information
-  - Note: Implementation uses edge/contour-based detection rather than HSV color-based, and is located in `utils/` rather than `src/ver0/`
-- [] Evaluate "quality" of extraction (precision of borders, leakage between rooms).
-- [] If quality is poor, fall back to manual/ML approach (see section 3).
+---
 
-## 3. Small handmade labelled set (fallback)
-- [] Create `labelled_samples/` with 20–40 images.
-- [] Manually store room coordinates & types in JSON:
-  ```json
-  {
-    "image_id": "xxx.png",
-    "rooms": [
-      {"type": "bedroom", "bbox": [x1, y1, x2, y2]},
-      {"type": "bathroom", "bbox": [x1, y1, x2, y2]}
-    ]
-  }
-  ```
-- [] Train a tiny model / script to learn colour-to-room or contour-to-room mapping (optional).
-- [] Use this labelled set later to measure extraction error.
+## 2. Room extraction (edge/contour segmentation)
+- [x] Implemented in `utils/data_formater.py`:
+  - [x] Room mask generation
+  - [x] Room polygons
+  - [x] Centroids
+  - [x] Corner points
+  - [x] Metadata export to `processed/floor_plans/`
+- [ ] Evaluate segmentation leakage & missing-room cases.
+- [ ] (Optional, for later) fallback ML-based segmentation.
 
-## 4. Text → structured metadata
-- [x] Create `backend/src/ver0/text_to_support_text.py`.
-- [x] Define spatial vocab: `["N","S","E","W","NE","NW","SE","SW","C"]`.
-- [x] Implement rule/regex parser for sentences like:
-  - "The first bedroom is located at south west."
-  - "The first bathroom is located at north east."
-  - Supports directional relationships (north_of, south_of, etc.)
-  - Supports multi-room phrases and various room type aliases
-- [x] Output format: List of `Room` objects with sections, relationships, and metadata
-- [x] Comprehensive test suite in `backend/tests/ver0/test_text_to_support_text.py`
+> v0 uses **existing edge-based segmentation**.  
+> No need for ML refinement before coursework deadline.
 
-## 5. Orientation / rotation normalisation
-- [] Add script `backend/src/ver0/orient.py`:
-  - [] Detect dominant wall angle (Hough or largest contour).
-  - [] Rotate image to the closest 0/90/180/270.
-  - [] Save rotation angle in metadata for later use.
+---
 
-## 6. Grid encoder
-- [x] Implement 4x4 grid encoder (`backend/src/ver0/grid_encoder.py`)
-  - [x] `encode_floorplan_to_grid()` function that converts floor plan metadata to `GridSample`
-  - [x] Maps room centroids to grid cells
-  - [x] Calculates room sections (NW, NE, SW, SE) based on cell positions
-  - [x] Calculates minimum cells based on room area ratios
-  - [x] Supports text section overrides from parser
-  - [x] Creates target mask for room positions
-- [x] Comprehensive test suite in `backend/tests/ver0/test_grid_encoder.py`
-- [] Implement 2x2 grid encoder (optional extension)
-- [] Save per-image encoded layout to `backend/data/processed/encoded/{image_id}.json` (batch processing script needed)
+## 3. Small handmade labelled set (fallback) — *POSTPONED*
+- [ ] Create `labelled_samples/` with 20–40 manually labelled images.
+- [ ] Add JSON room annotations.
+- [ ] Train tiny model for segmentation correction.
+- [ ] Compare to automated masks.
+
+> *Post-coursework; only needed for a v1 pipeline.*
+
+---
+
+## 4. Natural language → structured metadata
+- [x] Implement `backend/src/ver0/text_to_support_text.py`.
+- [x] Full support for:
+  - Multi-room expressions
+  - Ordinals (compact, numeric, word-based)
+  - Room aliases
+  - Directional relationships
+  - Section/location parsing
+  - Conflict preservation
+- [x] Comprehensive test suite (pytest).
+- [ ] Add conflict-debugging pretty-printer (optional).
+
+---
+
+## 5. Orientation / rotation normalisation — *LOW PRIORITY*
+- [ ] Create `backend/src/ver0/orient.py`
+  - [ ] Detect dominant wall orientation
+  - [ ] Rotate image to nearest 0/90/180/270
+  - [ ] Save rotation info to metadata
+
+> **Optional for v0.**  
+> Only implement if we discover rotation inconsistencies in the dataset.
+
+---
+
+## 6. Grid encoder (4×4 v0)
+- [x] Implement `backend/src/ver0/grid_encoder.py`
+  - [x] Map polygons → centroids → grid cells
+  - [x] Section override from text parser
+  - [x] Estimate minimum size via area ratio
+  - [x] Output `GridSample`
+- [x] Test suite in `backend/tests/ver0/test_grid_encoder.py`
+- [ ] Batch script to generate encoded layouts to:
+      `backend/data/processed/encoded/{id}.json`
+
+> 2×2 grid encoder postponed until RL/EAv2 work.
+
+---
 
 ## 7. Fitness design (soft penalties)
-- [x] Define constraint scoring system (`backend/src/ver0/constraints.py`):
-  - [x] F1: quadrant penalty (room-in-correct-zone based on text metadata)
-  - [x] F2: overlap penalty (room-overlap detection)
-  - [x] F3: area penalty (room size matching)
-  - [x] F4: compactness penalty (bounding box efficiency)
-  - [x] F5: adjacency penalty (common room pairs distance)
-- [x] Implement weighted fitness function (`backend/src/ver0/fitness.py`):
-  - [x] `score_constraints()` returns `ConstraintScores` with all penalty terms
-  - [x] `scalarize()` combines scores with configurable weights
-  - [x] `evaluate()` main API for fitness evaluation
-  - [x] Default weights: quadrant=1.0, overlap=3.0, area=1.0, compactness=0.5, adjacency=0.5
-- [x] Comprehensive test suite in `backend/tests/ver0/test_constraints.py`
-- [] Add YAML/JSON configuration file for weights (optional enhancement)
+- [x] Implement `backend/src/ver0/constraints.py`:
+  - [x] quadrant penalty
+  - [x] overlap penalty
+  - [x] area penalty
+  - [x] compactness penalty
+  - [x] adjacency penalty
+- [x] Implement `backend/src/ver0/fitness.py`:
+  - [x] Weight config
+  - [x] `evaluate()` for EA
+- [x] Test suite
 
-## 8. EA scaffold
-- [] Create `backend/src/ver0/evolution.py` with:
-  - [] `init_population(...)`
-  - [] `evaluate_population(...)`
-  - [] `select(...)`
-  - [] `crossover(...)`
-  - [] `mutate(...)`
-- [] Log per-generation best fitness to `logs/evo_run_*.jsonl`.
-- [] (Later) plug in grid-encoded layouts as genomes.
+- [ ] Add YAML/JSON config loader for fitness weights (optional).
 
-## 9. Testing & utilities
-- [x] Comprehensive unit tests for core modules:
-  - [x] `backend/tests/ver0/test_text_to_support_text.py` (10 test functions)
-  - [x] `backend/tests/ver0/test_grid_encoder.py` (10 test functions)
-  - [x] `backend/tests/ver0/test_constraints.py` (10 test functions)
-- [x] Test infrastructure:
-  - [x] Pytest configuration in `pyproject.toml`
-  - [x] Test directory structure: `backend/tests/ver0/`
-- [] Add a tiny CLI script `tools/run_preprocess.py` to run ALL preprocessing steps for the team.
-- [] Add integration tests for:
-  - [] Full pipeline: image → grid encoding → fitness evaluation
-  - [] Text parsing → grid encoding integration
-- [] Document all of this in `backend/src/ver0/README.md`.
+---
 
+## 8. Evolutionary Algorithm (EA v0)
+- [ ] Create `backend/src/ver0/evolver.py`
+  - [ ] Define genome format (4×4 occupancy: `room_id → list of cells`)
+  - [ ] `init_population()`
+  - [ ] `evaluate_population()`
+  - [ ] `tournament_select()` or `rank_select()`
+  - [ ] `crossover()` (cell swaps / room exchanges)
+  - [ ] `mutate()` (cell shuffling, section nudges)
+  - [ ] Main loop: produce JSONL logs per generation
+
+- [ ] Add high-level script:
+      `tools/run_ea_v0.py` to run a full EA optimisation for a single sample.
+
+---
+
+## 9. Integration tests & utilities
+- [x] Unit tests for all core modules.
+- [ ] Integration test:
+  - [ ] image → grid → fitness (single sample)
+  - [ ] text description → grid override → fitness
+- [ ] CLI script: `tools/run_preprocess.py` to regenerate entire pipeline.
+- [ ] Create `backend/src/ver0/README.md` documenting:
+  - Data flow
+  - Grid encoder
+  - Fitness system
+  - EA usage
+  - Future v1/v2 roadmap (RL–EA)
+
+---
+
+## 10. Post-coursework (v1+)
+- [ ] RL-assisted EA (model B in your diagram)
+- [ ] Experience replay of mutated genomes
+- [ ] RL critic that predicts fitness residuals
+- [ ] v2 synergistic optimisation (mutual EA–RL)
+- [ ] 2×2 + hierarchical grid encoder
