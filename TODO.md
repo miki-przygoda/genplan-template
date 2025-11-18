@@ -60,7 +60,9 @@ any items postponed to post-coursework development (hybrid EA/RL, 2×2 encoder, 
   - [ ] Save rotation info to metadata
 
 > **Optional for v0.**  
-> Only implement if we discover rotation inconsistencies in the dataset.
+> Only implement if we discover rotation inconsistencies in the dataset. 
+> currently not an issue - might be useful for a larger pipeline with 
+> less organised / messy data
 
 ---
 
