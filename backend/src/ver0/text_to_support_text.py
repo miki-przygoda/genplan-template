@@ -12,7 +12,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import re
-from typing import Iterable, Literal, NamedTuple
+from typing import Iterable, Literal, NamedTuple, Tuple, Dict, List
+
+from .vars import DEFAULT_GRID_SIZE
+from .grid_encoder import cell_to_nested
 
 
 Section = Literal["N", "S", "E", "W", "NE", "NW", "SE", "SW", "C"]
@@ -202,6 +205,65 @@ def link_rooms(room_a: Room, relationship_type: RoomToRoomRelationship, room_b: 
     room_a.add_relationship(Relationship(target=room_b.id, relationship_type=relationship_type))
     inverse = RELATIONSHIP_INVERSES[relationship_type]
     room_b.add_relationship(Relationship(target=room_a.id, relationship_type=inverse))
+
+
+# ---- grid helpers (for 16x16 nested layout) ----
+def _levels_for_grid(grid_size: int, base: int = 4) -> int:
+    levels = 1
+    size = base
+    while size < grid_size and levels < 5:
+        levels += 1
+        size *= base
+    return levels
+
+def section_to_cell(section: Section, grid_size: int = DEFAULT_GRID_SIZE) -> Tuple[int, int]:
+    """Map cardinal/ordinal section to a representative cell in a grid_size x grid_size grid."""
+    quarter = grid_size // 4
+    # centers of quadrants
+    centers = {
+        "NW": (quarter, quarter),
+        "NE": (quarter, grid_size - 1 - quarter),
+        "SW": (grid_size - 1 - quarter, quarter),
+        "SE": (grid_size - 1 - quarter, grid_size - 1 - quarter),
+        "N": (quarter, grid_size // 2),
+        "S": (grid_size - 1 - quarter, grid_size // 2),
+        "E": (grid_size // 2, grid_size - 1 - quarter),
+        "W": (grid_size // 2, quarter),
+        "C": (grid_size // 2, grid_size // 2),
+    }
+    return centers.get(section, centers["C"])
+
+def placement_hint_from_sections(
+    rooms: Iterable[Room],
+    grid_size: int = DEFAULT_GRID_SIZE,
+    block_size: int | None = None,
+    base: int = 4,
+) -> Tuple[Dict[str, List[Tuple[int, int]]], Dict[str, List[List[Tuple[int, int]]]]]:
+    """
+    Given rooms with sections (from support text), build a coarse placement hint on a 16x16 grid
+    plus a nested reference path per cell (coarse->fine across 4x4 tiles).
+    Returns: (placement_cells, nested_paths)
+    """
+    placement: Dict[str, List[Tuple[int, int]]] = {}
+    nested: Dict[str, List[List[Tuple[int, int]]]] = {}
+    levels = _levels_for_grid(grid_size, base=base)
+    # If not provided, choose a coarse block ~1/4 of the grid dimension to give rooms some area.
+    block_size = block_size or max(2, grid_size // 4)
+
+    for room in rooms:
+        center_r, center_c = section_to_cell(room.section, grid_size=grid_size)
+        cells: List[Tuple[int, int]] = []
+        # build a small block around the center to give rooms some area; clamp to grid bounds
+        for dr in range(-(block_size // 2), block_size // 2 + block_size % 2):
+            for dc in range(-(block_size // 2), block_size // 2 + block_size % 2):
+                r = min(grid_size - 1, max(0, center_r + dr))
+                c = min(grid_size - 1, max(0, center_c + dc))
+                cells.append((r, c))
+        name = room.canonical_name
+        placement[name] = cells
+        nested[name] = [cell_to_nested(rc, base=base, levels=levels) for rc in cells]
+
+    return placement, nested
 
 
 class RoomGraphBuilder:

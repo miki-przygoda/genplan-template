@@ -23,6 +23,7 @@ from .vars import (
 # Type aliases
 MakeRandomFn = Callable[[GridSample, random.Random], CandidateLayout]
 MutateFn = Callable[[CandidateLayout, random.Random, float], None]
+GrowMutateFn = Callable[[CandidateLayout, random.Random, Dict[str, int]], None]
 
 def make_sample(floor_id: str | int) -> GridSample:
     """Load a GridSample from a processed floor plan directory."""
@@ -31,26 +32,27 @@ def make_sample(floor_id: str | int) -> GridSample:
     return encode_floorplan_to_grid(floor_dir, grid_size=DEFAULT_GRID_SIZE)
 
 def make_random_layout(sample: GridSample, rng: random.Random) -> CandidateLayout:
-    """Generate a random layout by assigning random cells to each room."""
+    """Generate a random, compact-ish layout by placing rooms in local blocks."""
     grid_size = sample.grid_size
-    all_cells = [(r, c) for r in range(grid_size) for c in range(grid_size)]
-    rng.shuffle(all_cells)
-    
     placement: Dict[str, List[Cell]] = {}
-    cell_idx = 0
-    
     for room_spec in sample.rooms:
-        # Assign min_cells cells to this room
-        num_cells = max(1, room_spec.min_cells)
-        room_cells = all_cells[cell_idx:cell_idx + num_cells]
-        placement[room_spec.name] = room_cells
-        cell_idx += num_cells
-        
-        # If we've used all cells, reshuffle and continue
-        if cell_idx >= len(all_cells):
-            rng.shuffle(all_cells)
-            cell_idx = 0
-    
+        target = max(4, room_spec.min_cells)
+        # pick an anchor
+        anchor_r = rng.randrange(grid_size)
+        anchor_c = rng.randrange(grid_size)
+        cells: List[Cell] = []
+        # grow a local block roughly sqrt(target) wide
+        side = max(2, int((target) ** 0.5))
+        for dr in range(side):
+            for dc in range(side):
+                if len(cells) >= target:
+                    break
+                r = min(grid_size - 1, anchor_r + dr)
+                c = min(grid_size - 1, anchor_c + dc)
+                cells.append((r, c))
+            if len(cells) >= target:
+                break
+        placement[room_spec.name] = cells
     return CandidateLayout(placement=placement)
 
 @dataclass
@@ -74,10 +76,10 @@ class EAConfig:
 def _get_rng(seed: int | None) -> random.Random:
     return random.Random(seed)
 
-def evaluate_population(sample: GridSample, population: list[Genome], cfg: EAConfig) -> None:
+def evaluate_population(sample: GridSample, population: list[Genome], cfg: EAConfig, weights: Weights | None = None) -> None:
     for genome in population:
         if genome.fitness is None:
-            f, scores = evaluate(sample, genome.layout, cfg.weights)
+            f, scores = evaluate(sample, genome.layout, weights or cfg.weights)
             genome.fitness = f
             genome.scores = scores
 
@@ -119,6 +121,22 @@ def _infer_grid_size(layout: CandidateLayout, fallback: int = DEFAULT_GRID_SIZE)
     max_rc = max(max(r, c) for r, c in coords)
     return max(fallback, max_rc + 1)
 
+def _jitter_weights(w: Weights, rng: random.Random, gen: int) -> Weights:
+    """
+    Mild noise every 10 generations to escape plateaus.
+    """
+    if gen % 10 != 0:
+        return w
+    factor = lambda: 1 + rng.uniform(-0.03, 0.03)
+    return Weights(
+        quadrant=max(0.0, w.quadrant * factor()),
+        overlap=max(0.0, w.overlap * factor()),
+        area=max(0.0, w.area * factor()),
+        compactness=max(0.0, w.compactness * factor()),
+        adjacency=max(0.0, w.adjacency * factor()),
+        location=max(0.0, w.location * factor()),
+    )
+
 def mutate(layout: CandidateLayout, rng: random.Random, mutation_rate: float) -> None:
     """
     Mutate a layout by occasionally moving a single cell in a room to a 
@@ -134,6 +152,30 @@ def mutate(layout: CandidateLayout, rng: random.Random, mutation_rate: float) ->
             cells[idx] = new_cell
         if rng.random() < mutation_rate and len(cells) > 1:
             rng.shuffle(cells)
+
+def grow_mutation(layout: CandidateLayout, rng: random.Random, target_size: Dict[str, int]) -> None:
+    """
+    Targeted growth: for undersized rooms, add cells around their current bounding box.
+    """
+    grid_size = _infer_grid_size(layout)
+    for room, cells in layout.placement.items():
+        tgt = target_size.get(room, None)
+        if tgt is None or len(cells) >= tgt:
+            continue
+        needed = tgt - len(cells)
+        if not cells:
+            continue
+        rs = [r for r,_ in cells]
+        cs = [c for _,c in cells]
+        rmin, rmax = max(0, min(rs)-1), min(grid_size-1, max(rs)+1)
+        cmin, cmax = max(0, min(cs)-1), min(grid_size-1, max(cs)+1)
+        candidates = [(r,c) for r in range(rmin, rmax+1) for c in range(cmin, cmax+1)]
+        rng.shuffle(candidates)
+        for rc in candidates:
+            if len(cells) >= tgt:
+                break
+            if rc not in cells:
+                cells.append(rc)
 
 def copy_layout(layout: CandidateLayout) -> CandidateLayout:
     """Create a deep copy of a CandidateLayout."""
@@ -152,7 +194,7 @@ def reproduce(parents: list[Genome], cfg: EAConfig, rng: random.Random) -> list[
         offspring.append(Genome(layout=c2))
     return offspring
 
-def make_next_generation(sample: GridSample,population: list[Genome],cfg: EAConfig,rng: random.Random,make_random: MakeRandomFn,mutate_fn: MutateFn = mutate) -> list[Genome]:
+def make_next_generation(sample: GridSample,population: list[Genome],cfg: EAConfig,rng: random.Random,make_random: MakeRandomFn,mutate_fn: MutateFn = mutate,grow_mutate_fn: GrowMutateFn = grow_mutation) -> list[Genome]:
     """Create the next generation using elitism, tournament selection, crossover, and mutation.
     Assumes the incoming population already has fitness evaluated.
     """
@@ -172,7 +214,10 @@ def make_next_generation(sample: GridSample,population: list[Genome],cfg: EAConf
             parent2_layout = copy_layout(parent2.layout)
             crossover(child_layout, parent2_layout, rng)
         mutate_fn(child_layout, rng, cfg.mutation_rate)
-        
+        # targeted growth pass
+        target_sizes = {spec.name: max(4, spec.min_cells) for spec in sample.rooms}
+        grow_mutate_fn(child_layout, rng, target_sizes)
+
         new_population.append(Genome(layout=child_layout))
     return new_population
 
@@ -196,9 +241,10 @@ def evolve(sample: GridSample,cfg: EAConfig = EAConfig(),*,make_random: MakeRand
     history_best.append(min(fitnesses))
     history_mean.append(sum(fitnesses) / len(fitnesses))
 
-    for _ in range(cfg.generations):
+    for gen in range(cfg.generations):
+        dynamic_weights = _jitter_weights(cfg.weights, rng, gen)
         population = make_next_generation(sample, population, cfg, rng, make_random, mutate_fn)
-        evaluate_population(sample, population, cfg)
+        evaluate_population(sample, population, cfg, weights=dynamic_weights)
 
         fitnesses = [g.fitness for g in population if g.fitness is not None]
         gen_best = min(fitnesses)

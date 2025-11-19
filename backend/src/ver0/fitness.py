@@ -10,6 +10,7 @@ from .vars import (
     AREA_WEIGHT,
     COMPACTNESS_WEIGHT,
     ADJACENCY_WEIGHT,
+    LOCATION_WEIGHT,
 )
 
 
@@ -20,6 +21,7 @@ class Weights:
     area: float = AREA_WEIGHT
     compactness: float = COMPACTNESS_WEIGHT
     adjacency: float = ADJACENCY_WEIGHT
+    location: float = LOCATION_WEIGHT
 
 
 def scalarize(scores: ConstraintScores, w: Weights) -> float:
@@ -29,6 +31,7 @@ def scalarize(scores: ConstraintScores, w: Weights) -> float:
         + w.area * scores.area
         + w.compactness * scores.compactness
         + w.adjacency * scores.adjacency
+        + w.location * getattr(scores, "location", 0.0)
     )
 
 
