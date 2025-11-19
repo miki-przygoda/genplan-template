@@ -14,6 +14,7 @@ class RoomSpec:
     name: str
     section: Section
     min_cells: int
+    room_type: str | None = None  # optional label from metadata
 
 @dataclass
 class GridSample:
@@ -85,7 +86,7 @@ def encode_floorplan_to_grid(
         section = _text_section_override(text_sections, name, inferred_section)
 
         min_cells = _area_to_min_cells(rmeta["area_px"], img_wh=img_wh, grid_size=grid_size)
-        specs.append(RoomSpec(name=name, section=section, min_cells=min_cells))
+        specs.append(RoomSpec(name=name, section=section, min_cells=min_cells, room_type=rmeta.get("room_type")))
         centroid_cells.append(rc)
 
     target_mask = _make_target_mask(centroid_cells, grid_size=grid_size)

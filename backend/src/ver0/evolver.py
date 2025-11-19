@@ -26,7 +26,8 @@ MutateFn = Callable[[CandidateLayout, random.Random, float], None]
 
 def make_sample(floor_id: str | int) -> GridSample:
     """Load a GridSample from a processed floor plan directory."""
-    floor_dir = Path("backend/data/processed/floor_plans") / f"floor{int(floor_id):03d}"
+    repo_root = Path(__file__).resolve().parents[3]  # .../genplan-template
+    floor_dir = repo_root / "backend" / "data" / "processed" / "floor_plans" / f"floor{int(floor_id):03d}"
     return encode_floorplan_to_grid(floor_dir, grid_size=DEFAULT_GRID_SIZE)
 
 def make_random_layout(sample: GridSample, rng: random.Random) -> CandidateLayout:
@@ -175,20 +176,40 @@ def make_next_generation(sample: GridSample,population: list[Genome],cfg: EAConf
         new_population.append(Genome(layout=child_layout))
     return new_population
 
-def evolve(sample: GridSample,cfg: EAConfig = EAConfig(),*,make_random: MakeRandomFn = make_random_layout,mutate_fn: MutateFn = mutate) -> tuple[Genome, list[Genome]]:
+def evolve(sample: GridSample,cfg: EAConfig = EAConfig(),*,make_random: MakeRandomFn = make_random_layout,mutate_fn: MutateFn = mutate,) -> tuple[Genome, list[Genome], dict[str, list[float]]]:
     """
-    Run the evolutionary algorithm and return the best genome and final population.
+    Run the evolutionary algorithm and return:
+      - best genome
+      - final population
+      - history dict with per-generation metrics
     """
     rng = _get_rng(cfg.random_seed)
     population = init_population(sample, cfg, rng, make_random)
     evaluate_population(sample, population, cfg)
     best = min(population, key=lambda g: g.fitness if g.fitness is not None else float("inf"))
 
+    history_best: list[float] = []
+    history_mean: list[float] = []
+
+    # record generation 0
+    fitnesses = [g.fitness for g in population if g.fitness is not None]
+    history_best.append(min(fitnesses))
+    history_mean.append(sum(fitnesses) / len(fitnesses))
+
     for _ in range(cfg.generations):
         population = make_next_generation(sample, population, cfg, rng, make_random, mutate_fn)
         evaluate_population(sample, population, cfg)
+
+        fitnesses = [g.fitness for g in population if g.fitness is not None]
+        gen_best = min(fitnesses)
+        gen_mean = sum(fitnesses) / len(fitnesses)
+
+        history_best.append(gen_best)
+        history_mean.append(gen_mean)
+
         candidate = min(population, key=lambda g: g.fitness if g.fitness is not None else float("inf"))
         if candidate.fitness is not None and (best.fitness is None or candidate.fitness < best.fitness):
             best = candidate
 
-    return best, population
+    history = {"best": history_best, "mean": history_mean}
+    return best, population, history
