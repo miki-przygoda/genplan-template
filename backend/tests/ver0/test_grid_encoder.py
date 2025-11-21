@@ -213,49 +213,62 @@ def test_area_to_min_cells():
 
 
 def test_make_target_mask():
-    """Test target mask creation from centroid cells."""
+    """Test target mask creation from room polygons with fallbacks."""
     print("\n" + "=" * 60)
     print("INPUT")
     print("=" * 60)
-    print("Testing target mask creation...")
+    print("Testing target mask creation from polygons and fallback blocks...")
     
     print("\n" + "=" * 60)
     print("PROCESS")
     print("=" * 60)
-    print("Creating target masks from centroid cell positions...")
+    print("Creating target masks from polygon data...")
     
-    test_cases = [
-        ([(0, 0)], 4, np.array([[1, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]], dtype=np.uint8)),
-        ([(1, 1), (2, 2)], 4, np.array([[0, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 0]], dtype=np.uint8)),
-        ([(0, 0), (0, 3), (3, 0), (3, 3)], 4, np.array([[1, 0, 0, 1], [0, 0, 0, 0], [0, 0, 0, 0], [1, 0, 0, 1]], dtype=np.uint8)),
-        ([], 4, np.zeros((4, 4), dtype=np.uint8)),  # Empty list
+    img_wh = (4, 4)
+    specs = [
+        RoomSpec(
+            name="room_1",
+            section="NW",
+            min_cells=4,
+            target_cell=(0, 0),
+            polygon=[(0.1, 0.1), (0.9, 0.1), (0.9, 0.9), (0.1, 0.9)],
+        ),
+        RoomSpec(
+            name="room_2",
+            section="SE",
+            min_cells=4,
+            target_cell=(2, 2),
+            polygon=[(2.1, 2.1), (2.9, 2.1), (2.9, 2.9), (2.1, 2.9)],
+        ),
+        RoomSpec(  # No polygon -> fallback block
+            name="room_3",
+            section="S",
+            min_cells=4,
+            target_cell=(3, 0),
+            polygon=None,
+        ),
     ]
     
     print("\n" + "=" * 60)
     print("OUTPUT")
     print("=" * 60)
-    failures = []
-    
-    for centroid_cells, grid_size, expected in test_cases:
-        result = _make_target_mask(centroid_cells, grid_size=grid_size)
-        print(f"  Cells {centroid_cells} -> Mask shape {result.shape}")
-        print(f"    Mask:\n{result}")
-        if not np.array_equal(result, expected):
-            print(f"    ✗ Masks don't match")
-            print(f"    Expected:\n{expected}")
-            failures.append(f"Cells {centroid_cells}: masks don't match")
-        else:
-            print(f"✓ {result} is correct")
+    result = _make_target_mask(specs, grid_size=4, img_wh=img_wh, rotate_k=0)
+    expected = np.zeros((4, 4), dtype=np.uint8)
+    expected[0, 0] = 1
+    expected[2, 2] = 1
+    expected[2:4, 0:2] = 1  # fallback block for room_3
+    print(f"Mask shape {result.shape}")
+    print(f"Mask:\n{result}")
     
     print("\n" + "=" * 60)
     print("VERIFICATION")
     print("=" * 60)
-    if failures:
-        for i, failure in enumerate(failures, 1):
-            print(f"  {i}. {failure}")
-        pytest.fail(f"Test had {len(failures)} failure(s): {'; '.join(failures)}")
+    if not np.array_equal(result, expected):
+        print("  ✗ Masks don't match expected output")
+        print(f"    Expected:\n{expected}")
+        pytest.fail("Target mask does not match expected output")
     else:
-        print("✓ All target masks created correctly")
+        print("✓ Target mask created correctly")
 
 
 def test_text_section_override():
@@ -325,11 +338,23 @@ def test_encode_floorplan_to_grid_basic():
                     "room_id": 1,
                     "centroid": [128, 128],  # Should map to cell (1, 1) -> NW
                     "area_px": 15000,  # ~5.7% -> 2 min_cells
+                    "polygon": [
+                        [140, 140],
+                        [180, 140],
+                        [180, 180],
+                        [140, 180],
+                    ],
                 },
                 {
                     "room_id": 2,
                     "centroid": [384, 384],  # Should map to cell (3, 3) -> SE
                     "area_px": 25000,  # ~9.5% -> 3 min_cells
+                    "polygon": [
+                        [400, 400],
+                        [440, 400],
+                        [440, 440],
+                        [400, 440],
+                    ],
                 },
             ],
         }

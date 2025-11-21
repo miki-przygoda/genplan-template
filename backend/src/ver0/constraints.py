@@ -6,6 +6,7 @@ import numpy as np
 
 from .grid_encoder import GridSample, RoomSpec, cell_to_nested
 from .vars import DEFAULT_GRID_SIZE
+from .text_to_support_text import section_to_cell
 
 Cell = tuple[int, int]  # (r, c)
 
@@ -13,6 +14,7 @@ Cell = tuple[int, int]  # (r, c)
 class CandidateLayout:
     """room_name -> list of (r, c) cells in the working grid."""
     placement: Dict[str, List[Cell]]
+    active_rooms: set[str] | None = None
 
 @dataclass
 class ConstraintScores:
@@ -22,6 +24,9 @@ class ConstraintScores:
     compactness: float
     adjacency: float
     location: float = 0.0
+    section: float = 0.0
+    dispersion: float = 0.0
+    room_usage: float = 0.0
 
 # ---------- helpers ----------
 def quadrant_of_cell(rc: Cell, grid_size: int = DEFAULT_GRID_SIZE) -> str:
@@ -51,7 +56,7 @@ def manhattan(a: Cell, b: Cell) -> int:
 def hierarchical_reference(cand: CandidateLayout, grid_size: int = DEFAULT_GRID_SIZE, base: int = 4) -> dict[str, list[list[tuple[int, int]]]]:
     """
     Build a nested cell reference for each room: for every (r,c) return its hierarchical path
-    across base x base tiles (e.g., 16x16 -> 4x4 blocks-of-4).
+    across base x base tiles (e.g., 32x32 -> stacked 4x4 blocks).
     """
     levels = 1
     size = base
@@ -66,25 +71,48 @@ def hierarchical_reference(cand: CandidateLayout, grid_size: int = DEFAULT_GRID_
 
 # ---------- penalties ----------
 def quadrant_penalty(sample: GridSample, cand: CandidateLayout) -> float:
-    """Penalty for rooms whose centroid cell is outside target quadrant (distance to nearest in-quadrant cell)."""
+    """Penalty for rooms whose centroid cell is outside target quadrant/half (distance to section centre)."""
     g = sample.grid_size
     total = 0.0
     for spec in sample.rooms:
+        if not getattr(spec, "is_active", True):
+            continue
         cells = cand.placement.get(spec.name, [])
         if not cells:
             continue
         ctr = centroid_of_cells(cells)
+        if not spec.section:
+            continue
+        section_center = section_to_cell(spec.section, grid_size=g)
         q = quadrant_of_cell(ctr, g)
+        # Encourage exact quadrant matches first
         if spec.section in {"NW","NE","SW","SE"}:
             if q != spec.section:
-                q_center = {
-                    "NW": (g//4, g//4),
-                    "NE": (g//4, g - 1 - g//4),
-                    "SW": (g - 1 - g//4, g//4),
-                    "SE": (g - 1 - g//4, g - 1 - g//4),
-                }[spec.section]
-                total += manhattan(ctr, q_center)
+                total += manhattan(ctr, section_center)
+            continue
+        # Cardinal/central sections also incur distance proportional penalty
+        if spec.section in {"N", "S", "E", "W", "C"}:
+            total += manhattan(ctr, section_center)
     return total
+
+def section_alignment_penalty(sample: GridSample, cand: CandidateLayout) -> float:
+    """Distance of each room centroid to the coarse section centre with a tolerance window."""
+    total = 0.0
+    g = sample.grid_size
+    tolerance = max(1, g // 6)
+    for spec in sample.rooms:
+        if not getattr(spec, "is_active", True):
+            continue
+        if not spec.section:
+            continue
+        cells = cand.placement.get(spec.name, [])
+        if not cells:
+            continue
+        ctr = centroid_of_cells(cells)
+        section_center = section_to_cell(spec.section, grid_size=g)
+        dist = manhattan(ctr, section_center)
+        total += max(0, dist - tolerance)
+    return total / max(1, g)
 
 def overlap_penalty(cand: CandidateLayout, grid_size: int = DEFAULT_GRID_SIZE) -> float:
     occ = np.zeros((grid_size, grid_size), dtype=int)
@@ -97,6 +125,8 @@ def overlap_penalty(cand: CandidateLayout, grid_size: int = DEFAULT_GRID_SIZE) -
 def area_penalty(sample: GridSample, cand: CandidateLayout) -> float:
     total = 0.0
     for spec in sample.rooms:
+        if not getattr(spec, "is_active", True):
+            continue
         assigned = len(cand.placement.get(spec.name, []))
         target = spec.expected_cells or spec.min_cells or 4
         target = max(4, target)  # enforce 2x2 minimum
@@ -110,7 +140,10 @@ def compactness_penalty(cand: CandidateLayout) -> float:
     - penalize empty space inside bounding box
     """
     total = 0.0
-    for cells in cand.placement.values():
+    allowed = cand.active_rooms
+    for room_name, cells in cand.placement.items():
+        if allowed is not None and room_name not in allowed:
+            continue
         if not cells:
             continue
         rs = [r for (r, _) in cells]
@@ -122,11 +155,26 @@ def compactness_penalty(cand: CandidateLayout) -> float:
         area = len(cells)
         # connected components penalty
         k = _num_components(cells)
-        comp_penalty = max(0, k - 1)
-        # empty space inside bbox
+        comp_penalty = 2 * max(0, k - 1)  # heavier penalty for fragmentation
+        # empty space inside bbox (scaled up to kill gaps)
         empty_frac = max(0.0, (bbox_area - area) / max(1, bbox_area))
-        total += (bbox_perimeter / max(1, area)) + comp_penalty + empty_frac
+        empty_penalty = 4 * empty_frac
+        total += 1.5 * (bbox_perimeter / max(1, area)) + comp_penalty + empty_penalty
     return float(total)
+
+def dispersion_penalty(cand: CandidateLayout, grid_size: int) -> float:
+    """Penalise layouts whose cells are spread far from their centroid (random scatter)."""
+    total = 0.0
+    allowed = cand.active_rooms
+    for room_name, cells in cand.placement.items():
+        if allowed is not None and room_name not in allowed:
+            continue
+        if len(cells) <= 1:
+            continue
+        ctr = centroid_of_cells(cells)
+        spread = sum(manhattan(cell, ctr) for cell in cells) / max(1, len(cells))
+        total += spread / max(1, grid_size)
+    return total
 
 def adjacency_penalty(sample: GridSample, cand: CandidateLayout) -> float:
     """
@@ -152,6 +200,8 @@ def location_penalty(sample: GridSample, cand: CandidateLayout) -> float:
     """Pull room centroids toward their target cells (from metadata)."""
     total = 0.0
     for spec in sample.rooms:
+        if not getattr(spec, "is_active", True):
+            continue
         tgt = spec.target_cell
         cells = cand.placement.get(spec.name, [])
         if not tgt or not cells:
@@ -185,15 +235,38 @@ def _num_components(cells: List[Cell]) -> int:
                     stack.append(nb)
     return comps
 
+def room_usage_penalty(sample: GridSample, cand: CandidateLayout) -> float:
+    """Penalty for using rooms beyond the text-derived quota or leaving required slots empty."""
+    active_names = getattr(sample, "active_room_names", None)
+    target = getattr(sample, "active_room_target", None)
+    if not active_names or target is None:
+        return 0.0
+    used_active = 0
+    inactive_used = 0
+    for spec in sample.rooms:
+        cells = cand.placement.get(spec.name, [])
+        if not cells:
+            continue
+        if getattr(spec, "is_active", True):
+            used_active += 1
+        else:
+            inactive_used += 1
+    missing_active = max(0, min(target, len(active_names)) - used_active)
+    return float(inactive_used + missing_active)
+
 # ---------- main API ----------
 def score_constraints(sample: GridSample, cand: CandidateLayout) -> ConstraintScores:
     g = sample.grid_size
-    # normalize overlap by grid cells
-    overlap = overlap_penalty(cand, g) / max(1, g * g)
+    # keep overlap as a raw count to strongly punish any collision
+    overlap = float(overlap_penalty(cand, g))
+    # heavier compactness signal; normalized only by room count
     compact = compactness_penalty(cand) / max(1, len(cand.placement) or 1)
     area = area_penalty(sample, cand) / max(1, len(sample.rooms))
     loc = location_penalty(sample, cand) / max(1, len(sample.rooms))
     quad = quadrant_penalty(sample, cand) / max(1, g)
+    section = section_alignment_penalty(sample, cand)
+    dispersion = dispersion_penalty(cand, g) / max(1, len(cand.placement) or 1)
+    room_usage = room_usage_penalty(sample, cand)
     adj = adjacency_penalty(sample, cand)
     return ConstraintScores(
         quadrant=quad,
@@ -202,4 +275,7 @@ def score_constraints(sample: GridSample, cand: CandidateLayout) -> ConstraintSc
         compactness=compact,
         adjacency=adj,
         location=loc,
+        section=section,
+        dispersion=dispersion,
+        room_usage=room_usage,
     )

@@ -207,7 +207,7 @@ def link_rooms(room_a: Room, relationship_type: RoomToRoomRelationship, room_b: 
     room_b.add_relationship(Relationship(target=room_a.id, relationship_type=inverse))
 
 
-# ---- grid helpers (for 16x16 nested layout) ----
+# ---- grid helpers (for default 32x32 nested layout) ----
 def _levels_for_grid(grid_size: int, base: int = 4) -> int:
     levels = 1
     size = base
@@ -233,6 +233,24 @@ def section_to_cell(section: Section, grid_size: int = DEFAULT_GRID_SIZE) -> Tup
     }
     return centers.get(section, centers["C"])
 
+def section_bounds(
+    section: Section,
+    grid_size: int = DEFAULT_GRID_SIZE,
+    half_span: int | None = None,
+) -> tuple[int, int, int, int]:
+    """
+    Return an axis-aligned bounding box for a section.
+    The box is centred on the section's representative cell but
+    keeps a configurable half_span to provide a soft region rather than a single point.
+    """
+    center_r, center_c = section_to_cell(section, grid_size=grid_size)
+    half = half_span if half_span is not None else max(2, grid_size // 8)
+    r0 = max(0, center_r - half)
+    r1 = min(grid_size - 1, center_r + half)
+    c0 = max(0, center_c - half)
+    c1 = min(grid_size - 1, center_c + half)
+    return r0, r1, c0, c1
+
 def placement_hint_from_sections(
     rooms: Iterable[Room],
     grid_size: int = DEFAULT_GRID_SIZE,
@@ -240,24 +258,22 @@ def placement_hint_from_sections(
     base: int = 4,
 ) -> Tuple[Dict[str, List[Tuple[int, int]]], Dict[str, List[List[Tuple[int, int]]]]]:
     """
-    Given rooms with sections (from support text), build a coarse placement hint on a 16x16 grid
+    Given rooms with sections (from support text), build a coarse placement hint on a 32x32 grid
     plus a nested reference path per cell (coarse->fine across 4x4 tiles).
     Returns: (placement_cells, nested_paths)
     """
     placement: Dict[str, List[Tuple[int, int]]] = {}
     nested: Dict[str, List[List[Tuple[int, int]]]] = {}
     levels = _levels_for_grid(grid_size, base=base)
-    # If not provided, choose a coarse block ~1/4 of the grid dimension to give rooms some area.
-    block_size = block_size or max(2, grid_size // 4)
+    # If not provided, choose a coarse block ~1/5 of the grid dimension to give rooms a tighter area.
+    block_size = block_size or max(2, grid_size // 5)
 
     for room in rooms:
         center_r, center_c = section_to_cell(room.section, grid_size=grid_size)
         cells: List[Tuple[int, int]] = []
-        # build a small block around the center to give rooms some area; clamp to grid bounds
-        for dr in range(-(block_size // 2), block_size // 2 + block_size % 2):
-            for dc in range(-(block_size // 2), block_size // 2 + block_size % 2):
-                r = min(grid_size - 1, max(0, center_r + dr))
-                c = min(grid_size - 1, max(0, center_c + dc))
+        r0, r1, c0, c1 = section_bounds(room.section, grid_size=grid_size, half_span=block_size // 2)
+        for r in range(r0, r1 + 1):
+            for c in range(c0, c1 + 1):
                 cells.append((r, c))
         name = room.canonical_name
         placement[name] = cells

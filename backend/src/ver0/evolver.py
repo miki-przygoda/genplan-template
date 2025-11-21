@@ -1,5 +1,5 @@
 from __future__ import annotations
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List, Tuple, Dict, Iterable, Callable
 import random
 import copy
@@ -18,12 +18,21 @@ from .vars import (
     ELITE_FRACTION,
     RANDOM_SEED,
     DEFAULT_GRID_SIZE,
+    NO_CHANGE_PENALTY,
 )
 
 # Type aliases
 MakeRandomFn = Callable[[GridSample, random.Random], CandidateLayout]
 MutateFn = Callable[[CandidateLayout, random.Random, float], None]
 GrowMutateFn = Callable[[CandidateLayout, random.Random, Dict[str, int]], None]
+
+def layout_signature(layout: CandidateLayout) -> tuple:
+    """Canonical representation of a layout for change detection."""
+    signature: list[tuple[str, tuple[tuple[int, int], ...]]] = []
+    for room, cells in layout.placement.items():
+        signature.append((room, tuple(sorted(cells))))
+    signature.sort(key=lambda item: item[0])
+    return tuple(signature)
 
 def make_sample(floor_id: str | int) -> GridSample:
     """Load a GridSample from a processed floor plan directory."""
@@ -34,14 +43,16 @@ def make_sample(floor_id: str | int) -> GridSample:
 def make_random_layout(sample: GridSample, rng: random.Random) -> CandidateLayout:
     """Generate a random, compact-ish layout by placing rooms in local blocks."""
     grid_size = sample.grid_size
-    placement: Dict[str, List[Cell]] = {}
+    allowed = sample.active_room_names
+    allowed_set = set(allowed) if allowed is not None else None
+    placement: Dict[str, List[Cell]] = {spec.name: [] for spec in sample.rooms}
     for room_spec in sample.rooms:
+        if allowed_set is not None and room_spec.name not in allowed_set:
+            continue
         target = max(4, room_spec.min_cells)
-        # pick an anchor
         anchor_r = rng.randrange(grid_size)
         anchor_c = rng.randrange(grid_size)
         cells: List[Cell] = []
-        # grow a local block roughly sqrt(target) wide
         side = max(2, int((target) ** 0.5))
         for dr in range(side):
             for dc in range(side):
@@ -53,7 +64,10 @@ def make_random_layout(sample: GridSample, rng: random.Random) -> CandidateLayou
             if len(cells) >= target:
                 break
         placement[room_spec.name] = cells
-    return CandidateLayout(placement=placement)
+    return CandidateLayout(
+        placement=placement,
+        active_rooms=allowed_set.copy() if allowed_set is not None else None,
+    )
 
 @dataclass
 class Genome:
@@ -72,9 +86,18 @@ class EAConfig:
     elite_fraction: float = ELITE_FRACTION
     random_seed: int | None = RANDOM_SEED
     weights: Weights = Weights()
+    stagnation_threshold: int = 20
+    restart_fraction: float = 0.25
+    mutation_boost: float = 1.5
+    mutation_floor: float = 0.02
+    mutation_ceiling: float = 0.8
+    no_change_penalty: float = NO_CHANGE_PENALTY
 
 def _get_rng(seed: int | None) -> random.Random:
     return random.Random(seed)
+
+def _fitness_value(genome: Genome) -> float:
+    return genome.fitness if genome.fitness is not None else float("inf")
 
 def evaluate_population(sample: GridSample, population: list[Genome], cfg: EAConfig, weights: Weights | None = None) -> None:
     for genome in population:
@@ -112,6 +135,10 @@ def crossover(c1: CandidateLayout, c2: CandidateLayout, rng: random.Random) -> N
             cells2 = copy.deepcopy(c2.placement.get(room, []))
             c1.placement[room] = cells2
             c2.placement[room] = cells1
+        if c1.active_rooms is not None and room not in c1.active_rooms:
+            c1.placement[room] = []
+        if c2.active_rooms is not None and room not in c2.active_rooms:
+            c2.placement[room] = []
 
 def _infer_grid_size(layout: CandidateLayout, fallback: int = DEFAULT_GRID_SIZE) -> int:
     """Best-effort grid size guess from existing cell coordinates."""
@@ -143,7 +170,11 @@ def mutate(layout: CandidateLayout, rng: random.Random, mutation_rate: float) ->
     new grid position and optionally shuffling the room's cell ordering.
     """
     grid_size = _infer_grid_size(layout)
-    for cells in layout.placement.values():
+    allowed = layout.active_rooms
+    for room_name, cells in layout.placement.items():
+        if allowed is not None and room_name not in allowed:
+            layout.placement[room_name] = []
+            continue
         if not cells:
             continue
         if rng.random() < mutation_rate:
@@ -158,7 +189,11 @@ def grow_mutation(layout: CandidateLayout, rng: random.Random, target_size: Dict
     Targeted growth: for undersized rooms, add cells around their current bounding box.
     """
     grid_size = _infer_grid_size(layout)
+    allowed = layout.active_rooms
     for room, cells in layout.placement.items():
+        if allowed is not None and room not in allowed:
+            layout.placement[room] = []
+            continue
         tgt = target_size.get(room, None)
         if tgt is None or len(cells) >= tgt:
             continue
@@ -179,7 +214,10 @@ def grow_mutation(layout: CandidateLayout, rng: random.Random, target_size: Dict
 
 def copy_layout(layout: CandidateLayout) -> CandidateLayout:
     """Create a deep copy of a CandidateLayout."""
-    return CandidateLayout(placement=copy.deepcopy(layout.placement))
+    return CandidateLayout(
+        placement=copy.deepcopy(layout.placement),
+        active_rooms=set(layout.active_rooms) if layout.active_rooms is not None else None,
+    )
 
 def reproduce(parents: list[Genome], cfg: EAConfig, rng: random.Random) -> list[Genome]:
     offspring: list[Genome] = []
@@ -194,7 +232,16 @@ def reproduce(parents: list[Genome], cfg: EAConfig, rng: random.Random) -> list[
         offspring.append(Genome(layout=c2))
     return offspring
 
-def make_next_generation(sample: GridSample,population: list[Genome],cfg: EAConfig,rng: random.Random,make_random: MakeRandomFn,mutate_fn: MutateFn = mutate,grow_mutate_fn: GrowMutateFn = grow_mutation) -> list[Genome]:
+def make_next_generation(
+    sample: GridSample,
+    population: list[Genome],
+    cfg: EAConfig,
+    rng: random.Random,
+    make_random: MakeRandomFn,
+    mutate_fn: MutateFn = mutate,
+    grow_mutate_fn: GrowMutateFn = grow_mutation,
+    mutation_rate: float | None = None,
+) -> list[Genome]:
     """Create the next generation using elitism, tournament selection, crossover, and mutation.
     Assumes the incoming population already has fitness evaluated.
     """
@@ -213,13 +260,39 @@ def make_next_generation(sample: GridSample,population: list[Genome],cfg: EAConf
         if rng.random() < cfg.crossover_rate:
             parent2_layout = copy_layout(parent2.layout)
             crossover(child_layout, parent2_layout, rng)
-        mutate_fn(child_layout, rng, cfg.mutation_rate)
+        effective_mutation = mutation_rate if mutation_rate is not None else cfg.mutation_rate
+        effective_mutation = max(cfg.mutation_floor, min(cfg.mutation_ceiling, effective_mutation))
+        mutate_fn(child_layout, rng, effective_mutation)
         # targeted growth pass
-        target_sizes = {spec.name: max(4, spec.min_cells) for spec in sample.rooms}
+        target_sizes: Dict[str, int] = {}
+        allowed = sample.active_room_names
+        for spec in sample.rooms:
+            if allowed is not None and spec.name not in allowed and sample.active_room_target is not None:
+                target_sizes[spec.name] = 0
+            else:
+                target_sizes[spec.name] = max(4, spec.min_cells)
         grow_mutate_fn(child_layout, rng, target_sizes)
 
         new_population.append(Genome(layout=child_layout))
     return new_population
+
+def inject_diversity(
+    population: list[Genome],
+    sample: GridSample,
+    cfg: EAConfig,
+    rng: random.Random,
+    make_random: MakeRandomFn,
+    fraction: float,
+) -> bool:
+    count = max(1, int(len(population) * max(0.0, min(1.0, fraction))))
+    indexed = list(enumerate(population))
+    indexed.sort(key=lambda pair: _fitness_value(pair[1]), reverse=True)
+    replaced = False
+    for idx, _ in indexed[:count]:
+        layout = make_random(sample, rng)
+        population[idx] = Genome(layout=layout)
+        replaced = True
+    return replaced
 
 def evolve(sample: GridSample,cfg: EAConfig = EAConfig(),*,make_random: MakeRandomFn = make_random_layout,mutate_fn: MutateFn = mutate,) -> tuple[Genome, list[Genome], dict[str, list[float]]]:
     """
@@ -231,10 +304,13 @@ def evolve(sample: GridSample,cfg: EAConfig = EAConfig(),*,make_random: MakeRand
     rng = _get_rng(cfg.random_seed)
     population = init_population(sample, cfg, rng, make_random)
     evaluate_population(sample, population, cfg)
-    best = min(population, key=lambda g: g.fitness if g.fitness is not None else float("inf"))
+    best = min(population, key=_fitness_value)
 
     history_best: list[float] = []
     history_mean: list[float] = []
+    stagnation = 0
+    current_mutation_rate = max(cfg.mutation_floor, cfg.mutation_rate)
+    last_best_signature: tuple | None = None
 
     # record generation 0
     fitnesses = [g.fitness for g in population if g.fitness is not None]
@@ -243,7 +319,15 @@ def evolve(sample: GridSample,cfg: EAConfig = EAConfig(),*,make_random: MakeRand
 
     for gen in range(cfg.generations):
         dynamic_weights = _jitter_weights(cfg.weights, rng, gen)
-        population = make_next_generation(sample, population, cfg, rng, make_random, mutate_fn)
+        population = make_next_generation(
+            sample,
+            population,
+            cfg,
+            rng,
+            make_random,
+            mutate_fn,
+            mutation_rate=current_mutation_rate,
+        )
         evaluate_population(sample, population, cfg, weights=dynamic_weights)
 
         fitnesses = [g.fitness for g in population if g.fitness is not None]
@@ -253,9 +337,59 @@ def evolve(sample: GridSample,cfg: EAConfig = EAConfig(),*,make_random: MakeRand
         history_best.append(gen_best)
         history_mean.append(gen_mean)
 
-        candidate = min(population, key=lambda g: g.fitness if g.fitness is not None else float("inf"))
+        candidate = min(population, key=_fitness_value)
+        penalized = False
+        candidate_signature = layout_signature(candidate.layout)
+        if (
+            last_best_signature is not None
+            and candidate_signature == last_best_signature
+            and cfg.no_change_penalty > 0
+            and candidate.fitness is not None
+        ):
+            candidate.fitness += cfg.no_change_penalty
+            penalized = True
+        if penalized:
+            fitnesses = [g.fitness for g in population if g.fitness is not None]
+            if fitnesses:
+                gen_best = min(fitnesses)
+                gen_mean = sum(fitnesses) / len(fitnesses)
+                history_best[-1] = gen_best
+                history_mean[-1] = gen_mean
+            candidate = min(population, key=_fitness_value)
+            stagnation = max(stagnation, cfg.stagnation_threshold)
+        improved = False
         if candidate.fitness is not None and (best.fitness is None or candidate.fitness < best.fitness):
             best = candidate
+            improved = True
+
+        if improved:
+            stagnation = 0
+            current_mutation_rate = max(cfg.mutation_floor, cfg.mutation_rate)
+        else:
+            stagnation += 1
+            if cfg.stagnation_threshold > 0 and stagnation >= cfg.stagnation_threshold:
+                replaced = inject_diversity(
+                    population,
+                    sample,
+                    cfg,
+                    rng,
+                    make_random,
+                    fraction=cfg.restart_fraction,
+                )
+                if replaced:
+                    evaluate_population(sample, population, cfg, weights=dynamic_weights)
+                    fitnesses = [g.fitness for g in population if g.fitness is not None]
+                    gen_best = min(fitnesses)
+                    gen_mean = sum(fitnesses) / len(fitnesses)
+                    history_best[-1] = gen_best
+                    history_mean[-1] = gen_mean
+                    candidate = min(population, key=_fitness_value)
+                    if candidate.fitness is not None and (best.fitness is None or candidate.fitness < best.fitness):
+                        best = candidate
+                current_mutation_rate = min(cfg.mutation_ceiling, current_mutation_rate * cfg.mutation_boost)
+                stagnation = 0
+        if best.fitness is not None:
+            last_best_signature = layout_signature(best.layout)
 
     history = {"best": history_best, "mean": history_mean}
     return best, population, history
