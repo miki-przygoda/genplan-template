@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import random
 
-# Grid defaults (increased to 16x16 = 4x4 of 4x4 cells)
-DEFAULT_GRID_SIZE = 16
+DEFAULT_GRID_SIZE = 64
+ROTATE_IMAGE_K = 0
 
 # EA configuration defaults
 POPULATION_SIZE = 64
@@ -14,10 +14,19 @@ TOURNAMENT_K = 3
 ELITE_FRACTION = 0.05
 RANDOM_SEED = random.randint(0, 1_000_000)
 
-# Fitness weights (lower is better; weights are penalties)
-QUADRANT_WEIGHT = 1.0
-OVERLAP_WEIGHT = 4.0
-AREA_WEIGHT = 3.0        # stronger push to hit target cell counts (min 2x2)
-COMPACTNESS_WEIGHT = 3.0 # penalize fragmented/gappy rooms more
-ADJACENCY_WEIGHT = 0.5
-LOCATION_WEIGHT = 1.0    # pulls rooms toward their target location
+
+QUADRANT_WEIGHT = 0.9
+OVERLAP_WEIGHT = 5.0
+AREA_WEIGHT = 4.0
+COMPACTNESS_WEIGHT = 3.5
+ADJACENCY_WEIGHT = 0.6
+LOCATION_WEIGHT = 1.2
+SECTION_WEIGHT = 1.5
+DISPERSION_WEIGHT = 1.0
+ROOM_USAGE_WEIGHT = 1.5
+MASK_WEIGHT = 2.0
+BUDGET_WEIGHT = 3.0
+SECTION_BBOX_WEIGHT = 2.5
+REALISM_WEIGHT = 5.0
+REALISM_THRESHOLD = 1.0
+NO_CHANGE_PENALTY = 1.0

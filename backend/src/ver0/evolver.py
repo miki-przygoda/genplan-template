@@ -7,8 +7,9 @@ import copy
 from pathlib import Path
 
 from .grid_encoder import GridSample, encode_floorplan_to_grid
-from .constraints import CandidateLayout, ConstraintScores, Cell
+from .constraints import CandidateLayout, ConstraintScores, Cell, manhattan, centroid_of_cells
 from .fitness import evaluate, Weights
+from .text_to_support_text import section_bounds, section_to_cell
 from .vars import (
     POPULATION_SIZE,
     GENERATIONS,
@@ -41,28 +42,59 @@ def make_sample(floor_id: str | int) -> GridSample:
     return encode_floorplan_to_grid(floor_dir, grid_size=DEFAULT_GRID_SIZE)
 
 def make_random_layout(sample: GridSample, rng: random.Random) -> CandidateLayout:
-    """Generate a random, compact-ish layout by placing rooms in local blocks."""
+    """Seed the population with large, section-aware room blocks.
+
+    Rooms are placed near their hinted section/target cell in descending size order
+    so the initial population already covers big areas of the map. This gives the EA
+    something close to the desired layout to prune (remove) or extend (add) cells from.
+    """
     grid_size = sample.grid_size
     allowed = sample.active_room_names
     allowed_set = set(allowed) if allowed is not None else None
     placement: Dict[str, List[Cell]] = {spec.name: [] for spec in sample.rooms}
-    for room_spec in sample.rooms:
-        if allowed_set is not None and room_spec.name not in allowed_set:
-            continue
-        target = max(4, room_spec.min_cells)
-        anchor_r = rng.randrange(grid_size)
-        anchor_c = rng.randrange(grid_size)
-        cells: List[Cell] = []
-        side = max(2, int((target) ** 0.5))
-        for dr in range(side):
-            for dc in range(side):
-                if len(cells) >= target:
-                    break
-                r = min(grid_size - 1, anchor_r + dr)
-                c = min(grid_size - 1, anchor_c + dc)
-                cells.append((r, c))
-            if len(cells) >= target:
+    occupied: set[Cell] = set()
+
+    def _fill_region(center: Cell, target: int, bounds: tuple[int, int, int, int]) -> list[Cell]:
+        """Pick cells nearest to center within bounds, avoiding current occupancy."""
+        r0, r1, c0, c1 = bounds
+        candidates: list[tuple[int, Cell]] = []
+        for r in range(r0, r1 + 1):
+            for c in range(c0, c1 + 1):
+                rc = (r, c)
+                if rc in occupied:
+                    continue
+                candidates.append((manhattan(rc, center), rc))
+        # Prefer closer cells; small jitter to avoid symmetry
+        rng.shuffle(candidates)
+        candidates.sort(key=lambda item: item[0])
+        chosen: list[Cell] = []
+        for _, rc in candidates:
+            chosen.append(rc)
+            occupied.add(rc)
+            if len(chosen) >= target:
                 break
+        return chosen
+
+    # Focus on active/text rooms only; others stay empty.
+    ordered_specs = sorted(
+        [s for s in sample.rooms if (allowed_set is None or s.name in allowed_set)],
+        key=lambda s: s.expected_cells or s.min_cells,
+        reverse=True,
+    )
+    room_count = max(1, len(ordered_specs))
+    # Allow each room to initially claim a generous share of the grid within its section.
+    for room_spec in ordered_specs:
+        target_cells = max(4, room_spec.expected_cells or room_spec.min_cells or 4)
+        center = room_spec.target_cell or section_to_cell(room_spec.section, grid_size=grid_size)
+        # share-based desired size so rooms start big: roughly 60% of equal partition
+        share = int(0.6 * (grid_size * grid_size) / room_count)
+        desired = min(grid_size * grid_size // 2, max(target_cells * 2, share))
+        bounds = section_bounds(room_spec.section, grid_size=grid_size, half_span=max(4, grid_size // 3))
+        cells = _fill_region(center, desired, bounds)
+        if len(cells) < desired:
+            # widen search to full grid if the section region is crowded
+            global_bounds = (0, grid_size - 1, 0, grid_size - 1)
+            cells.extend(_fill_region(center, desired - len(cells), global_bounds))
         placement[room_spec.name] = cells
     return CandidateLayout(
         placement=placement,
@@ -186,7 +218,7 @@ def mutate(layout: CandidateLayout, rng: random.Random, mutation_rate: float) ->
 
 def grow_mutation(layout: CandidateLayout, rng: random.Random, target_size: Dict[str, int]) -> None:
     """
-    Targeted growth: for undersized rooms, add cells around their current bounding box.
+    Targeted growth/shrink: adjust rooms toward their target size near current shape.
     """
     grid_size = _infer_grid_size(layout)
     allowed = layout.active_rooms
@@ -195,22 +227,29 @@ def grow_mutation(layout: CandidateLayout, rng: random.Random, target_size: Dict
             layout.placement[room] = []
             continue
         tgt = target_size.get(room, None)
-        if tgt is None or len(cells) >= tgt:
+        if tgt is None:
             continue
-        needed = tgt - len(cells)
         if not cells:
             continue
-        rs = [r for r,_ in cells]
-        cs = [c for _,c in cells]
-        rmin, rmax = max(0, min(rs)-1), min(grid_size-1, max(rs)+1)
-        cmin, cmax = max(0, min(cs)-1), min(grid_size-1, max(cs)+1)
-        candidates = [(r,c) for r in range(rmin, rmax+1) for c in range(cmin, cmax+1)]
-        rng.shuffle(candidates)
-        for rc in candidates:
-            if len(cells) >= tgt:
-                break
-            if rc not in cells:
-                cells.append(rc)
+        if len(cells) < tgt:
+            needed = tgt - len(cells)
+            rs = [r for r,_ in cells]
+            cs = [c for _,c in cells]
+            rmin, rmax = max(0, min(rs)-1), min(grid_size-1, max(rs)+1)
+            cmin, cmax = max(0, min(cs)-1), min(grid_size-1, max(cs)+1)
+            candidates = [(r,c) for r in range(rmin, rmax+1) for c in range(cmin, cmax+1)]
+            rng.shuffle(candidates)
+            for rc in candidates:
+                if len(cells) >= tgt:
+                    break
+                if rc not in cells:
+                    cells.append(rc)
+        elif len(cells) > tgt:
+            # Trim farthest cells first to encourage compactness around centroid
+            ctr = centroid_of_cells(cells)
+            to_remove = len(cells) - tgt
+            cells.sort(key=lambda rc: manhattan(rc, ctr), reverse=True)
+            del cells[:to_remove]
 
 def copy_layout(layout: CandidateLayout) -> CandidateLayout:
     """Create a deep copy of a CandidateLayout."""
@@ -267,10 +306,10 @@ def make_next_generation(
         target_sizes: Dict[str, int] = {}
         allowed = sample.active_room_names
         for spec in sample.rooms:
-            if allowed is not None and spec.name not in allowed and sample.active_room_target is not None:
+            if (allowed is not None and spec.name not in allowed) or not getattr(spec, "is_active", True):
                 target_sizes[spec.name] = 0
             else:
-                target_sizes[spec.name] = max(4, spec.min_cells)
+                target_sizes[spec.name] = max(4, spec.expected_cells or spec.min_cells)
         grow_mutate_fn(child_layout, rng, target_sizes)
 
         new_population.append(Genome(layout=child_layout))

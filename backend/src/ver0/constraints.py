@@ -6,7 +6,7 @@ import numpy as np
 
 from .grid_encoder import GridSample, RoomSpec, cell_to_nested
 from .vars import DEFAULT_GRID_SIZE
-from .text_to_support_text import section_to_cell
+from .text_to_support_text import section_to_cell, section_bounds
 
 Cell = tuple[int, int]  # (r, c)
 
@@ -27,6 +27,9 @@ class ConstraintScores:
     section: float = 0.0
     dispersion: float = 0.0
     room_usage: float = 0.0
+    budget: float = 0.0
+    section_bbox: float = 0.0
+    mask: float = 0.0
 
 # ---------- helpers ----------
 def quadrant_of_cell(rc: Cell, grid_size: int = DEFAULT_GRID_SIZE) -> str:
@@ -115,12 +118,19 @@ def section_alignment_penalty(sample: GridSample, cand: CandidateLayout) -> floa
     return total / max(1, g)
 
 def overlap_penalty(cand: CandidateLayout, grid_size: int = DEFAULT_GRID_SIZE) -> float:
-    occ = np.zeros((grid_size, grid_size), dtype=int)
-    for cells in cand.placement.values():
+    room_sizes = {room: len(cells) for room, cells in cand.placement.items()}
+    occ_rooms: dict[tuple[int, int], list[str]] = {}
+    for room, cells in cand.placement.items():
         for (r, c) in cells:
             if 0 <= r < grid_size and 0 <= c < grid_size:
-                occ[r, c] += 1
-    return float((occ > 1).sum())
+                occ_rooms.setdefault((r, c), []).append(room)
+    total = 0.0
+    for rc, rooms in occ_rooms.items():
+        if len(rooms) <= 1:
+            continue
+        size_sum = sum(room_sizes.get(r, 0) for r in rooms)
+        total += (len(rooms) - 1) * size_sum
+    return float(total)
 
 def area_penalty(sample: GridSample, cand: CandidateLayout) -> float:
     total = 0.0
@@ -130,7 +140,12 @@ def area_penalty(sample: GridSample, cand: CandidateLayout) -> float:
         assigned = len(cand.placement.get(spec.name, []))
         target = spec.expected_cells or spec.min_cells or 4
         target = max(4, target)  # enforce 2x2 minimum
-        total += abs(assigned - target)
+        low = int(0.9 * target)
+        high = int(1.1 * target)
+        if low <= assigned <= high:
+            continue
+        delta = abs(assigned - target)
+        total += (delta ** 2) / max(1, target)
     return float(total)
 
 def compactness_penalty(cand: CandidateLayout) -> float:
@@ -254,19 +269,59 @@ def room_usage_penalty(sample: GridSample, cand: CandidateLayout) -> float:
     missing_active = max(0, min(target, len(active_names)) - used_active)
     return float(inactive_used + missing_active)
 
+def budget_penalty(sample: GridSample, cand: CandidateLayout) -> float:
+    target_total = 0
+    for spec in sample.rooms:
+        if getattr(spec, "is_active", True):
+            target_total += max(4, spec.expected_cells or spec.min_cells or 4)
+    target_total = max(1, target_total)
+    assigned_total = sum(len(cells) for cells in cand.placement.values())
+    return abs(assigned_total - target_total) / target_total
+
+def section_bbox_penalty(sample: GridSample, cand: CandidateLayout) -> float:
+    total = 0.0
+    g = sample.grid_size
+    for spec in sample.rooms:
+        if not getattr(spec, "is_active", True):
+            continue
+        cells = cand.placement.get(spec.name, [])
+        if not cells or not spec.section:
+            continue
+        r0, r1, c0, c1 = section_bounds(spec.section, grid_size=g, half_span=max(2, g // 6))
+        inside = [(r, c) for (r, c) in cells if r0 <= r <= r1 and c0 <= c <= c1]
+        if not inside:
+            total += len(cells)
+    return total
+
+def mask_penalty(sample: GridSample, cand: CandidateLayout) -> float:
+    mask = getattr(sample, "target_mask", None)
+    if mask is None:
+        return 0.0
+    g = sample.grid_size
+    layout = np.zeros((g, g), dtype=np.uint8)
+    for cells in cand.placement.values():
+        for (r, c) in cells:
+            if 0 <= r < g and 0 <= c < g:
+                layout[r, c] = 1
+    missing = np.logical_and(mask == 1, layout == 0).sum()
+    extra = np.logical_and(mask == 0, layout == 1).sum()
+    return float(missing + extra)
+
 # ---------- main API ----------
 def score_constraints(sample: GridSample, cand: CandidateLayout) -> ConstraintScores:
     g = sample.grid_size
     # keep overlap as a raw count to strongly punish any collision
     overlap = float(overlap_penalty(cand, g))
-    # heavier compactness signal; normalized only by room count
-    compact = compactness_penalty(cand) / max(1, len(cand.placement) or 1)
-    area = area_penalty(sample, cand) / max(1, len(sample.rooms))
-    loc = location_penalty(sample, cand) / max(1, len(sample.rooms))
+    compact = compactness_penalty(cand)
+    area = area_penalty(sample, cand)
+    loc = location_penalty(sample, cand)
     quad = quadrant_penalty(sample, cand) / max(1, g)
     section = section_alignment_penalty(sample, cand)
-    dispersion = dispersion_penalty(cand, g) / max(1, len(cand.placement) or 1)
+    dispersion = dispersion_penalty(cand, g)
     room_usage = room_usage_penalty(sample, cand)
+    budget = budget_penalty(sample, cand)
+    section_b = section_bbox_penalty(sample, cand)
+    mask = mask_penalty(sample, cand)
     adj = adjacency_penalty(sample, cand)
     return ConstraintScores(
         quadrant=quad,
@@ -278,4 +333,7 @@ def score_constraints(sample: GridSample, cand: CandidateLayout) -> ConstraintSc
         section=section,
         dispersion=dispersion,
         room_usage=room_usage,
+        budget=budget,
+        section_bbox=section_b,
+        mask=mask,
     )

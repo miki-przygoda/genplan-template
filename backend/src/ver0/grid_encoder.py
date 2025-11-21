@@ -8,6 +8,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 from .vars import DEFAULT_GRID_SIZE, ROTATE_IMAGE_K
+from .room_memory import room_size_for
 
 Section = str
 
@@ -184,9 +185,6 @@ def _parse_support_rooms(text: str | None) -> list:
         return []
     try:
         from .text_to_support_text import parse_supporting_text  # type: ignore
-    except Exception:
-        return []
-    try:
         rooms = parse_supporting_text(text)
     except Exception:
         return []
@@ -219,6 +217,31 @@ def _activate_rooms_from_text(specs: list[RoomSpec], text_rooms: list, grid_size
         specs[idx].expected_cells = 0
     return active_names
 
+def _rooms_from_text_only(text: str, grid_size: int) -> tuple[list[RoomSpec], set[str], int | None]:
+    text_rooms = _parse_support_rooms(text)
+    specs: list[RoomSpec] = []
+    active_names: set[str] = set()
+    for idx, room in enumerate(text_rooms):
+        exp, mn = room_size_for(room.room_type, grid_size)
+        name = f"{room.room_type}_{room.ordinal or idx + 1}"
+        section = room.section or "C"
+        target_cell = _section_to_cell(section, grid_size=grid_size)
+        specs.append(
+            RoomSpec(
+                name=name,
+                section=section,
+                min_cells=mn,
+                expected_cells=exp,
+                target_cell=target_cell,
+                room_type=room.room_type,
+                polygon=None,
+                is_active=True,
+            )
+        )
+        active_names.add(name)
+    active_target = len(active_names) if active_names else None
+    return specs, active_names, active_target
+
 # ------------ main API ------------
 def encode_floorplan_to_grid(
     floor_dir: Path,
@@ -226,53 +249,70 @@ def encode_floorplan_to_grid(
     *,
     name_to_text_section: Optional[Dict[str, Section]] = None,  # from parser (optional)
     rotate_k: int = ROTATE_IMAGE_K,  # multiples of 90 deg clockwise
+    text_override: str | None = None,
 ) -> GridSample:
     """
-    Build a grid sample from a processed floor folder (default 32x32 = nested 4x4 blocks).
-    Prefers text-derived sections if provided; otherwise uses centroid-based quadrants.
+    Build a grid sample from support text only; metadata geometry is ignored to avoid leakage.
     """
-    meta = _load_metadata(floor_dir)
-    support_text = (
-        meta.get("supporting_text")
-        or meta.get("support_text")
-        or meta.get("text")
-        or meta.get("scene_description")
-    )
+    meta = None
+    if text_override:
+        support_text = text_override
+        floor_id = -1
+    else:
+        meta = _load_metadata(floor_dir)
+        support_text = (
+            meta.get("supporting_text")
+            or meta.get("support_text")
+            or meta.get("text")
+            or meta.get("scene_description")
+        )
+        floor_id = int(meta.get("floor_id", -1)) if meta else -1
+
     text_rooms = _parse_support_rooms(support_text)
     section_counts = Counter(room.section for room in text_rooms if getattr(room, "section", None))
-    img_wh = (meta["image_size"]["width"], meta["image_size"]["height"])
-    rooms = meta["rooms"]
-
-    centroid_cells, specs = [], []
-    text_sections = name_to_text_section or {}
+    specs, active_names, active_target = _rooms_from_text_only(support_text or "", grid_size)
     levels = _levels_for_grid(grid_size, base=4)
 
+    return GridSample(
+        floor_id=floor_id,
+        grid_size=grid_size,
+        base=4,
+        levels=levels,
+        rooms=specs,
+        target_mask=None,
+        text_room_total=len(text_rooms) or None,
+        text_section_counts=dict(section_counts) if section_counts else None,
+        active_room_names=active_names,
+        active_room_target=active_target,
+    )
+
+
+def load_target_mask(floor_dir: Path, grid_size: int = DEFAULT_GRID_SIZE, rotate_k: int = ROTATE_IMAGE_K) -> Optional[np.ndarray]:
+    if not floor_dir.exists():
+        return None
+    meta = _load_metadata(floor_dir)
+    img_wh = (meta["image_size"]["width"], meta["image_size"]["height"])
+    rooms = meta["rooms"]
+    specs: list[RoomSpec] = []
     for rmeta in rooms:
         name = _room_name(rmeta)
-        centroid = tuple(rmeta["centroid"])  # (x,y)
+        centroid = tuple(rmeta["centroid"])
         rot_centroid = _rotate_point(centroid, img_wh=img_wh, k=rotate_k)
         rc = _centroid_to_cell(rot_centroid, img_wh=img_wh, grid_size=grid_size)
-
-        inferred_section = _cell_to_section(rc, grid_size=grid_size)
-        section = _text_section_override(text_sections, name, inferred_section)
-
         min_cells = _area_to_min_cells(rmeta["area_px"], img_wh=img_wh, grid_size=grid_size)
         expected_cells = min_cells
-        # If metadata provides a bounding box, refine expected size
         bbox = rmeta.get("bbox") or rmeta.get("bounding_box")
         if bbox and isinstance(bbox, dict) and "width" in bbox and "height" in bbox:
             px_area = bbox["width"] * bbox["height"]
             expected_cells = _area_to_min_cells(px_area, img_wh=img_wh, grid_size=grid_size)
-
         polygon = None
         raw_polygon = rmeta.get("polygon")
         if raw_polygon and isinstance(raw_polygon, list):
             polygon = [tuple(p) for p in raw_polygon if isinstance(p, (list, tuple)) and len(p) == 2]
-
         specs.append(
             RoomSpec(
                 name=name,
-                section=section,
+                section=None,
                 min_cells=min_cells,
                 expected_cells=expected_cells,
                 target_cell=rc,
@@ -280,30 +320,9 @@ def encode_floorplan_to_grid(
                 polygon=polygon,
             )
         )
-        centroid_cells.append(rc)
-
-    active_names = _activate_rooms_from_text(specs, text_rooms, grid_size)
-    text_room_total = len(text_rooms) or None
-    active_target = None
-    if text_room_total:
-        active_target = min(text_room_total, len(active_names))
-
-    target_mask = _make_target_mask(
+    return _make_target_mask(
         specs,
         grid_size=grid_size,
         img_wh=img_wh,
         rotate_k=rotate_k,
-    )
-
-    return GridSample(
-        floor_id=int(meta["floor_id"]),
-        grid_size=grid_size,
-        base=4,
-        levels=levels,
-        rooms=specs,
-        target_mask=target_mask,
-        text_room_total=text_room_total,
-        text_section_counts=dict(section_counts) if section_counts else None,
-        active_room_names=active_names,
-        active_room_target=active_target,
     )
