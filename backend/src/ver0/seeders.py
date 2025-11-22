@@ -21,9 +21,15 @@ def section_seed(sample, rng: random.Random) -> CandidateLayout:
     return make_random_layout(sample, rng)
 
 
+def _cells_from_mask(mask: np.ndarray, desired: int, rng: random.Random) -> list[Cell]:
+    coords = list(zip(*np.where(mask == 1)))
+    rng.shuffle(coords)
+    return coords[:desired]
+
 def _layout_from_mask(sample, rng: random.Random, fill_ratio: float = 0.8) -> CandidateLayout:
-    """Fill rooms by sampling from the target mask; fallback to section-based if mask absent."""
+    """Fill rooms by sampling from per-room masks or global mask; fallback to section-based if mask absent."""
     mask = getattr(sample, "target_mask", None)
+    room_masks = getattr(sample, "room_masks", None) or {}
     if mask is None or not np.any(mask):
         return make_random_layout(sample, rng)
 
@@ -36,9 +42,13 @@ def _layout_from_mask(sample, rng: random.Random, fill_ratio: float = 0.8) -> Ca
     coords = list(zip(*np.where(mask == 1)))
     rng.shuffle(coords)
 
-    def _sample_cells(target_count: int, bounds: tuple[int, int, int, int]) -> list[Cell]:
+    def _sample_cells_for_room(room_name: str, target_count: int, bounds: tuple[int, int, int, int]) -> list[Cell]:
         r0, r1, c0, c1 = bounds
-        pool = [(r, c) for (r, c) in coords if r0 <= r <= r1 and c0 <= c <= c1]
+        room_mask = room_masks.get(room_name)
+        if room_mask is not None and np.any(room_mask):
+            pool = _cells_from_mask(room_mask, target_count * 2, rng)
+        else:
+            pool = [(r, c) for (r, c) in coords if r0 <= r <= r1 and c0 <= c <= c1]
         if not pool:
             pool = coords
         rng.shuffle(pool)
@@ -54,7 +64,7 @@ def _layout_from_mask(sample, rng: random.Random, fill_ratio: float = 0.8) -> Ca
         desired = int(tgt * fill_ratio)
         center = spec.target_cell or section_to_cell(spec.section, grid_size=grid_size)
         bounds = section_bounds(spec.section, grid_size=grid_size, half_span=max(3, grid_size // 4))
-        cells = _sample_cells(desired, bounds)
+        cells = _sample_cells_for_room(spec.name, desired, bounds)
         if len(cells) < desired and coords:
             need = desired - len(cells)
             cells += coords[:need]

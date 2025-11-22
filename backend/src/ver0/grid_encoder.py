@@ -30,6 +30,7 @@ class GridSample:
     grid_size: int
     rooms: List[RoomSpec]
     target_mask: Optional[np.ndarray]
+    room_masks: Optional[dict[str, np.ndarray]] = None
     base: int = 4  # nested grid branching factor (per dimension)
     levels: int = 1  # how many nested 4x4 levels describe grid_size
     text_room_total: int | None = None
@@ -162,6 +163,33 @@ def _make_target_mask(
 
     return mask
 
+def _make_room_masks(
+    specs: List[RoomSpec],
+    *,
+    grid_size: int = DEFAULT_GRID_SIZE,
+    img_wh: tuple[int, int] = (512, 512),
+    rotate_k: int = 0,
+) -> dict[str, np.ndarray]:
+    """
+    Build per-room masks when polygon data exists. Rooms without polygons are omitted.
+    """
+    masks: dict[str, np.ndarray] = {}
+    for spec in specs:
+        polygon = spec.polygon
+        if not polygon or len(polygon) < 3:
+            continue
+        mask_img = Image.new("L", (grid_size, grid_size), 0)
+        draw = ImageDraw.Draw(mask_img)
+        scaled_poly = _scale_rotate_polygon(
+            polygon,
+            img_wh=img_wh,
+            grid_size=grid_size,
+            rotate_k=rotate_k,
+        )
+        draw.polygon(scaled_poly, outline=1, fill=1)
+        masks[spec.name] = (np.array(mask_img, dtype=np.uint8) > 0).astype(np.uint8)
+    return masks
+
 def _levels_for_grid(grid_size: int, base: int) -> int:
     """Small helper to describe grid_size as nested base x base tiles (e.g., 32 -> base=4, levels=3)."""
     levels = 1
@@ -269,6 +297,7 @@ def encode_floorplan_to_grid(
     """
     meta = None
     target_mask = None
+    room_masks = None
     if text_override:
         support_text = text_override
         floor_id = -1
@@ -282,6 +311,7 @@ def encode_floorplan_to_grid(
         )
         floor_id = int(meta.get("floor_id", -1)) if meta else -1
         target_mask = load_target_mask(floor_dir, grid_size=grid_size, rotate_k=rotate_k)
+        room_masks = load_room_masks(floor_dir, grid_size=grid_size, rotate_k=rotate_k)
 
     text_rooms = _parse_support_rooms(support_text)
     section_counts = Counter(room.section for room in text_rooms if getattr(room, "section", None))
@@ -295,6 +325,7 @@ def encode_floorplan_to_grid(
         levels=levels,
         rooms=specs,
         target_mask=target_mask,
+        room_masks=room_masks,
         text_room_total=len(text_rooms) or None,
         text_section_counts=dict(section_counts) if section_counts else None,
         active_room_names=active_names,
@@ -341,3 +372,44 @@ def load_target_mask(floor_dir: Path, grid_size: int = DEFAULT_GRID_SIZE, rotate
         img_wh=img_wh,
         rotate_k=rotate_k,
     )
+
+def load_room_masks(floor_dir: Path, grid_size: int = DEFAULT_GRID_SIZE, rotate_k: int = ROTATE_IMAGE_K) -> Optional[dict[str, np.ndarray]]:
+    if not floor_dir.exists():
+        return None
+    meta = _load_metadata(floor_dir)
+    img_wh = (meta["image_size"]["width"], meta["image_size"]["height"])
+    rooms = meta["rooms"]
+    specs: list[RoomSpec] = []
+    for rmeta in rooms:
+        name = _room_name(rmeta)
+        polygon = None
+        raw_polygon = rmeta.get("polygon")
+        if raw_polygon and isinstance(raw_polygon, list):
+            polygon = [tuple(p) for p in raw_polygon if isinstance(p, (list, tuple)) and len(p) == 2]
+        centroid = tuple(rmeta["centroid"])
+        rot_centroid = _rotate_point(centroid, img_wh=img_wh, k=rotate_k)
+        rc = _centroid_to_cell(rot_centroid, img_wh=img_wh, grid_size=grid_size)
+        min_cells = _area_to_min_cells(rmeta["area_px"], img_wh=img_wh, grid_size=grid_size)
+        expected_cells = min_cells
+        bbox = rmeta.get("bbox") or rmeta.get("bounding_box")
+        if bbox and isinstance(bbox, dict) and "width" in bbox and "height" in bbox:
+            px_area = bbox["width"] * bbox["height"]
+            expected_cells = _area_to_min_cells(px_area, img_wh=img_wh, grid_size=grid_size)
+        specs.append(
+            RoomSpec(
+                name=name,
+                section=None,
+                min_cells=min_cells,
+                expected_cells=expected_cells,
+                target_cell=rc,
+                room_type=rmeta.get("room_type"),
+                polygon=polygon,
+            )
+        )
+    masks = _make_room_masks(
+        specs,
+        grid_size=grid_size,
+        img_wh=img_wh,
+        rotate_k=rotate_k,
+    )
+    return masks or None
