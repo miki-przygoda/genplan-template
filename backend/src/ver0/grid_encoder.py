@@ -22,6 +22,7 @@ class RoomSpec:
     room_type: str | None = None  # optional label from metadata
     polygon: Optional[list[tuple[float, float]]] = None  # room contour in image coords
     is_active: bool = True
+    relationships: list[tuple[str, str]] | None = None  # (relationship_type, target_room_name)
 
 @dataclass
 class GridSample:
@@ -221,11 +222,21 @@ def _rooms_from_text_only(text: str, grid_size: int) -> tuple[list[RoomSpec], se
     text_rooms = _parse_support_rooms(text)
     specs: list[RoomSpec] = []
     active_names: set[str] = set()
+    id_to_name: dict[int, str] = {}
+    for idx, room in enumerate(text_rooms):
+        name = f"{room.room_type}_{room.ordinal or idx + 1}"
+        id_to_name[getattr(room, "id", idx)] = name
+
     for idx, room in enumerate(text_rooms):
         exp, mn = room_size_for(room.room_type, grid_size)
-        name = f"{room.room_type}_{room.ordinal or idx + 1}"
+        name = id_to_name.get(getattr(room, "id", idx), f"{room.room_type}_{room.ordinal or idx + 1}")
         section = room.section or "C"
         target_cell = _section_to_cell(section, grid_size=grid_size)
+        rels: list[tuple[str, str]] = []
+        for rel in getattr(room, "relationships", []):
+            tgt_name = id_to_name.get(getattr(rel, "target", -1))
+            if tgt_name:
+                rels.append((rel.relationship_type, tgt_name))
         specs.append(
             RoomSpec(
                 name=name,
@@ -236,6 +247,7 @@ def _rooms_from_text_only(text: str, grid_size: int) -> tuple[list[RoomSpec], se
                 room_type=room.room_type,
                 polygon=None,
                 is_active=True,
+                relationships=rels or None,
             )
         )
         active_names.add(name)
@@ -252,9 +264,11 @@ def encode_floorplan_to_grid(
     text_override: str | None = None,
 ) -> GridSample:
     """
-    Build a grid sample from support text only; metadata geometry is ignored to avoid leakage.
+    Build a grid sample from support text; if a processed floor_dir is provided the true mask
+    is also loaded to guide realism scoring.
     """
     meta = None
+    target_mask = None
     if text_override:
         support_text = text_override
         floor_id = -1
@@ -267,6 +281,7 @@ def encode_floorplan_to_grid(
             or meta.get("scene_description")
         )
         floor_id = int(meta.get("floor_id", -1)) if meta else -1
+        target_mask = load_target_mask(floor_dir, grid_size=grid_size, rotate_k=rotate_k)
 
     text_rooms = _parse_support_rooms(support_text)
     section_counts = Counter(room.section for room in text_rooms if getattr(room, "section", None))
@@ -279,7 +294,7 @@ def encode_floorplan_to_grid(
         base=4,
         levels=levels,
         rooms=specs,
-        target_mask=None,
+        target_mask=target_mask,
         text_room_total=len(text_rooms) or None,
         text_section_counts=dict(section_counts) if section_counts else None,
         active_room_names=active_names,

@@ -19,6 +19,7 @@ from .vars import (
     MASK_WEIGHT,
     REALISM_WEIGHT,
     REALISM_THRESHOLD,
+    RELATIONSHIP_WEIGHT,
 )
 from .real_plan_classifier import classify_real_floorplan
 
@@ -38,6 +39,7 @@ class Weights:
     section_bbox: float = SECTION_BBOX_WEIGHT
     mask: float = MASK_WEIGHT
     realism: float = REALISM_WEIGHT
+    relationships: float = RELATIONSHIP_WEIGHT
 
 
 def scalarize(scores: ConstraintScores, w: Weights) -> float:
@@ -54,6 +56,7 @@ def scalarize(scores: ConstraintScores, w: Weights) -> float:
         + w.budget * getattr(scores, "budget", 0.0)
         + w.section_bbox * getattr(scores, "section_bbox", 0.0)
         + w.mask * getattr(scores, "mask", 0.0)
+        + w.relationships * getattr(scores, "relationships", 0.0)
     )
 
 

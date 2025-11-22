@@ -53,6 +53,7 @@ def make_random_layout(sample: GridSample, rng: random.Random) -> CandidateLayou
     allowed_set = set(allowed) if allowed is not None else None
     placement: Dict[str, List[Cell]] = {spec.name: [] for spec in sample.rooms}
     occupied: set[Cell] = set()
+    target_cells: dict[str, Cell] = {}
 
     def _fill_region(center: Cell, target: int, bounds: tuple[int, int, int, int]) -> list[Cell]:
         """Pick cells nearest to center within bounds, avoiding current occupancy."""
@@ -84,11 +85,11 @@ def make_random_layout(sample: GridSample, rng: random.Random) -> CandidateLayou
     room_count = max(1, len(ordered_specs))
     # Allow each room to initially claim a generous share of the grid within its section.
     for room_spec in ordered_specs:
-        target_cells = max(4, room_spec.expected_cells or room_spec.min_cells or 4)
+        desired_cells = max(4, room_spec.expected_cells or room_spec.min_cells or 4)
         center = room_spec.target_cell or section_to_cell(room_spec.section, grid_size=grid_size)
         # share-based desired size so rooms start big: roughly 60% of equal partition
         share = int(0.6 * (grid_size * grid_size) / room_count)
-        desired = min(grid_size * grid_size // 2, max(target_cells * 2, share))
+        desired = min(grid_size * grid_size // 2, max(desired_cells * 2, share))
         bounds = section_bounds(room_spec.section, grid_size=grid_size, half_span=max(4, grid_size // 3))
         cells = _fill_region(center, desired, bounds)
         if len(cells) < desired:
@@ -96,9 +97,11 @@ def make_random_layout(sample: GridSample, rng: random.Random) -> CandidateLayou
             global_bounds = (0, grid_size - 1, 0, grid_size - 1)
             cells.extend(_fill_region(center, desired - len(cells), global_bounds))
         placement[room_spec.name] = cells
+        target_cells[room_spec.name] = center
     return CandidateLayout(
         placement=placement,
         active_rooms=allowed_set.copy() if allowed_set is not None else None,
+        target_cells=target_cells,
     )
 
 @dataclass
@@ -198,11 +201,23 @@ def _jitter_weights(w: Weights, rng: random.Random, gen: int) -> Weights:
 
 def mutate(layout: CandidateLayout, rng: random.Random, mutation_rate: float) -> None:
     """
-    Mutate a layout by occasionally moving a single cell in a room to a 
-    new grid position and optionally shuffling the room's cell ordering.
+    Section-aware mutation that nudges cells around target centres and trims overlaps.
     """
     grid_size = _infer_grid_size(layout)
     allowed = layout.active_rooms
+    targets = layout.target_cells or {}
+
+    def _sample_near(room: str) -> Cell:
+        center = targets.get(room)
+        if center is None:
+            return (rng.randrange(grid_size), rng.randrange(grid_size))
+        half = max(1, grid_size // 10)
+        r0 = max(0, center[0] - half)
+        r1 = min(grid_size - 1, center[0] + half)
+        c0 = max(0, center[1] - half)
+        c1 = min(grid_size - 1, center[1] + half)
+        return (rng.randint(r0, r1), rng.randint(c0, c1))
+
     for room_name, cells in layout.placement.items():
         if allowed is not None and room_name not in allowed:
             layout.placement[room_name] = []
@@ -211,10 +226,38 @@ def mutate(layout: CandidateLayout, rng: random.Random, mutation_rate: float) ->
             continue
         if rng.random() < mutation_rate:
             idx = rng.randrange(len(cells))
-            new_cell = (rng.randrange(grid_size), rng.randrange(grid_size))
-            cells[idx] = new_cell
+            cells[idx] = _sample_near(room_name)
+        # occasional small whole-room shift to preserve compactness
+        if rng.random() < 0.25 * mutation_rate and len(cells) > 1:
+            dr = rng.choice([-1, 0, 1])
+            dc = rng.choice([-1, 0, 1])
+            shifted = []
+            for (r, c) in cells:
+                nr = min(grid_size - 1, max(0, r + dr))
+                nc = min(grid_size - 1, max(0, c + dc))
+                shifted.append((nr, nc))
+            layout.placement[room_name] = shifted
         if rng.random() < mutation_rate and len(cells) > 1:
             rng.shuffle(cells)
+    _resolve_overlaps(layout, grid_size)
+
+def _resolve_overlaps(layout: CandidateLayout, grid_size: int) -> None:
+    """Remove duplicate occupancy by trimming from larger rooms first."""
+    room_sizes = {room: len(cells) for room, cells in layout.placement.items()}
+    occ: dict[Cell, list[str]] = {}
+    for room, cells in layout.placement.items():
+        for rc in cells:
+            if 0 <= rc[0] < grid_size and 0 <= rc[1] < grid_size:
+                occ.setdefault(rc, []).append(room)
+    for rc, rooms in occ.items():
+        if len(rooms) <= 1:
+            continue
+        rooms_sorted = sorted(rooms, key=lambda r: room_sizes.get(r, 0))
+        keeper = rooms_sorted[0]
+        for room in rooms_sorted[1:]:
+            cells = layout.placement.get(room, [])
+            if rc in cells:
+                cells.remove(rc)
 
 def grow_mutation(layout: CandidateLayout, rng: random.Random, target_size: Dict[str, int]) -> None:
     """
@@ -256,6 +299,7 @@ def copy_layout(layout: CandidateLayout) -> CandidateLayout:
     return CandidateLayout(
         placement=copy.deepcopy(layout.placement),
         active_rooms=set(layout.active_rooms) if layout.active_rooms is not None else None,
+        target_cells=dict(layout.target_cells) if layout.target_cells is not None else None,
     )
 
 def reproduce(parents: list[Genome], cfg: EAConfig, rng: random.Random) -> list[Genome]:

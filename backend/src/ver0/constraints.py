@@ -15,6 +15,7 @@ class CandidateLayout:
     """room_name -> list of (r, c) cells in the working grid."""
     placement: Dict[str, List[Cell]]
     active_rooms: set[str] | None = None
+    target_cells: dict[str, Cell] | None = None
 
 @dataclass
 class ConstraintScores:
@@ -30,6 +31,7 @@ class ConstraintScores:
     budget: float = 0.0
     section_bbox: float = 0.0
     mask: float = 0.0
+    relationships: float = 0.0
 
 # ---------- helpers ----------
 def quadrant_of_cell(rc: Cell, grid_size: int = DEFAULT_GRID_SIZE) -> str:
@@ -211,6 +213,42 @@ def adjacency_penalty(sample: GridSample, cand: CandidateLayout) -> float:
                 total += (dist - 2) / sample.grid_size  # normalized
     return total
 
+def relationship_penalty(sample: GridSample, cand: CandidateLayout) -> float:
+    """
+    Penalize violations of directional relationships extracted from text.
+    Uses room centroids and normalizes by grid size to keep values comparable.
+    """
+    total = 0.0
+    g = sample.grid_size
+    centroids = {room: centroid_of_cells(cells) for room, cells in cand.placement.items() if cells}
+    for spec in sample.rooms:
+        if not getattr(spec, "is_active", True):
+            continue
+        rels = getattr(spec, "relationships", None)
+        if not rels:
+            continue
+        src_ctr = centroids.get(spec.name)
+        if not src_ctr:
+            continue
+        for rel_type, target_name in rels:
+            dst_ctr = centroids.get(target_name)
+            if not dst_ctr:
+                continue
+            dr = src_ctr[0] - dst_ctr[0]
+            dc = src_ctr[1] - dst_ctr[1]
+            dir_pen = 0
+            if rel_type == "north_of":
+                dir_pen = max(0, dr + 1)
+            elif rel_type == "south_of":
+                dir_pen = max(0, -dr + 1)
+            elif rel_type == "east_of":
+                dir_pen = max(0, -dc + 1)
+            elif rel_type == "west_of":
+                dir_pen = max(0, dc + 1)
+            dist_pen = max(0, manhattan(src_ctr, dst_ctr) - 1)
+            total += (dir_pen + 0.25 * dist_pen) / max(1, g)
+    return total
+
 def location_penalty(sample: GridSample, cand: CandidateLayout) -> float:
     """Pull room centroids toward their target cells (from metadata)."""
     total = 0.0
@@ -336,4 +374,5 @@ def score_constraints(sample: GridSample, cand: CandidateLayout) -> ConstraintSc
         budget=budget,
         section_bbox=section_b,
         mask=mask,
+        relationships=relationship_penalty(sample, cand),
     )
