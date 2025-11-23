@@ -180,6 +180,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run long RL bandit training with live monitoring.")
     parser.add_argument("--episodes", type=int, default=50, help="How many episodes to run (upper bound).")
     parser.add_argument("--gens", type=int, default=150, help="Generations per episode.")
+    parser.add_argument("--population", type=int, default=None, help="Population size per episode.")
     parser.add_argument("--grid-size", type=int, default=None, help="Grid size override.")
     parser.add_argument("--rotate-k", type=int, default=None, help="Rotation augmentation (k*90 degrees).")
     parser.add_argument("--epsilon", type=float, default=0.15, help="Initial epsilon for the bandit (decayed on start).")
@@ -259,6 +260,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     grid_size = args.grid_size or DEFAULT_GRID_SIZE
     rotate_k = args.rotate_k if args.rotate_k is not None else ROTATE_IMAGE_K
     episodes = max(1, args.episodes)
+    population_size = args.population or POPULATION_SIZE
     max_workers = args.max_workers or max(1, (os.cpu_count() or 2) // 2)
 
     state_path = args.state_path or (project_root / "backend" / "data" / "rl" / "seed_bandit.json")
@@ -291,7 +293,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     )
 
     cfg = EAConfig(
-        population_size=POPULATION_SIZE,
+        population_size=population_size,
         generations=args.gens or GENERATIONS,
         crossover_rate=CROSSOVER_RATE,
         mutation_rate=MUTATION_RATE,
