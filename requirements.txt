@@ -27,6 +27,7 @@ packaging
 pandas
 pillow
 propcache
+psutil
 pyarrow
 python-dateutil
 pytz
