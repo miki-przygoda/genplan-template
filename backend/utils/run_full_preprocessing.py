@@ -31,7 +31,6 @@ from preprocessing_data_extract import (  # type: ignore
     DEFAULT_NO_TEXT_PATH,
     run_data_audit,
 )
-from data_formater import process_dataset  # type: ignore
 
 
 def parse_args() -> argparse.Namespace:
@@ -84,6 +83,18 @@ def main() -> None:
 
     # Generate processed masks/metadata
     print("\n=== Generating processed floor plans ===")
+    try:
+        from data_formater import process_dataset  # type: ignore
+    except ImportError as exc:  # pragma: no cover - defensive guard
+        print(
+            "Failed to import processing pipeline (data_formater). "
+            "This often means OpenCV or its system deps (e.g., libGL) are missing.\n"
+            f"Import error: {exc}",
+            file=sys.stderr,
+        )
+        print("Install OS packages for OpenCV GUI/GL (e.g., libgl1/libglu1) and pip install -r requirements.txt.")
+        sys.exit(1)
+
     process_dataset(
         dataset_path=args.dataset_path,
         dataset_name=args.dataset_name,
