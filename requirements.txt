@@ -22,7 +22,7 @@ matplotlib-inline
 multidict
 multiprocess
 numpy
-opencv-python
+opencv-python-headless
 packaging
 pandas
 pillow
