@@ -38,24 +38,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--message",
         "-m",
-        default="chore: update rl training data",
+        default="update to rl-training data",
         help="Commit message to use.",
     )
     parser.add_argument(
         "--no-push",
         action="store_true",
         help="Skip pushing to origin (still commits locally).",
-    )
-    parser.add_argument(
-        "--extra",
-        nargs="*",
-        default=[],
-        help="Additional files to stage (paths relative to repo root).",
-    )
-    parser.add_argument(
-        "--pull-rebase",
-        action="store_true",
-        help="Auto-run 'git pull --rebase' before pushing to avoid non-fast-forward errors.",
     )
     return parser.parse_args()
 
@@ -64,26 +53,36 @@ def main() -> None:
     args = parse_args()
 
     targets = [path for path in DEFAULT_TARGETS if path.exists()]
-    for extra in args.extra:
-        targets.append((PROJECT_ROOT / extra).resolve())
-
     if not targets:
         print("No RL data files found to commit. Expected defaults are missing.", file=sys.stderr)
         sys.exit(1)
 
-    # Convert to repo-relative paths for nicer git output
+    # Pull latest before staging to avoid non-fast-forward issues
+    branch = current_branch(PROJECT_ROOT)
+    print(f"Pulling latest with rebase on {branch} ...")
+    try:
+        run(["git", "pull", "--rebase", "origin", branch], cwd=PROJECT_ROOT)
+    except subprocess.CalledProcessError as exc:
+        print(f"git pull --rebase failed: {exc}", file=sys.stderr)
+        sys.exit(exc.returncode)
+
+    # Stage only the default RL files
     rel_targets = [str(p.relative_to(PROJECT_ROOT)) for p in targets]
     print(f"Staging files: {', '.join(rel_targets)}")
     run(["git", "add", "--"] + rel_targets, cwd=PROJECT_ROOT)
+
+    # Check if anything is staged
+    status = subprocess.run(
+        ["git", "diff", "--cached", "--quiet"], cwd=PROJECT_ROOT
+    )
+    if status.returncode == 0:
+        print("No changes in RL data to commit. Exiting.")
+        sys.exit(0)
 
     print(f"Committing with message: {args.message!r}")
     run(["git", "commit", "-m", args.message], cwd=PROJECT_ROOT)
 
     if not args.no_push:
-        branch = current_branch(PROJECT_ROOT)
-        if args.pull_rebase:
-            print(f"Pulling latest with rebase on {branch} ...")
-            run(["git", "pull", "--rebase", "origin", branch], cwd=PROJECT_ROOT)
         print(f"Pushing to origin/{branch} ...")
         run(["git", "push", "origin", branch], cwd=PROJECT_ROOT)
     else:
