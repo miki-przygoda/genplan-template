@@ -16,6 +16,7 @@ class CandidateLayout:
     placement: Dict[str, List[Cell]]
     active_rooms: set[str] | None = None
     target_cells: dict[str, Cell] | None = None
+    relationships: dict[str, list[tuple[str, str]]] | None = None
 
 @dataclass
 class ConstraintScores:

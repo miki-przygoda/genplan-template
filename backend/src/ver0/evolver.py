@@ -21,6 +21,7 @@ from .vars import (
     DEFAULT_GRID_SIZE,
     NO_CHANGE_PENALTY,
 )
+from .mutator import mutate, grow_mutation
 
 # Type aliases
 MakeRandomFn = Callable[[GridSample, random.Random], CandidateLayout]
@@ -102,6 +103,7 @@ def make_random_layout(sample: GridSample, rng: random.Random) -> CandidateLayou
         placement=placement,
         active_rooms=allowed_set.copy() if allowed_set is not None else None,
         target_cells=target_cells,
+        relationships={spec.name: getattr(spec, "relationships", []) or [] for spec in sample.rooms},
     )
 
 @dataclass
@@ -199,48 +201,6 @@ def _jitter_weights(w: Weights, rng: random.Random, gen: int) -> Weights:
         location=max(0.0, w.location * factor()),
     )
 
-def mutate(layout: CandidateLayout, rng: random.Random, mutation_rate: float) -> None:
-    """
-    Section-aware mutation that nudges cells around target centres and trims overlaps.
-    """
-    grid_size = _infer_grid_size(layout)
-    allowed = layout.active_rooms
-    targets = layout.target_cells or {}
-
-    def _sample_near(room: str) -> Cell:
-        center = targets.get(room)
-        if center is None:
-            return (rng.randrange(grid_size), rng.randrange(grid_size))
-        half = max(1, grid_size // 10)
-        r0 = max(0, center[0] - half)
-        r1 = min(grid_size - 1, center[0] + half)
-        c0 = max(0, center[1] - half)
-        c1 = min(grid_size - 1, center[1] + half)
-        return (rng.randint(r0, r1), rng.randint(c0, c1))
-
-    for room_name, cells in layout.placement.items():
-        if allowed is not None and room_name not in allowed:
-            layout.placement[room_name] = []
-            continue
-        if not cells:
-            continue
-        if rng.random() < mutation_rate:
-            idx = rng.randrange(len(cells))
-            cells[idx] = _sample_near(room_name)
-        # occasional small whole-room shift to preserve compactness
-        if rng.random() < 0.25 * mutation_rate and len(cells) > 1:
-            dr = rng.choice([-1, 0, 1])
-            dc = rng.choice([-1, 0, 1])
-            shifted = []
-            for (r, c) in cells:
-                nr = min(grid_size - 1, max(0, r + dr))
-                nc = min(grid_size - 1, max(0, c + dc))
-                shifted.append((nr, nc))
-            layout.placement[room_name] = shifted
-        if rng.random() < mutation_rate and len(cells) > 1:
-            rng.shuffle(cells)
-    _resolve_overlaps(layout, grid_size)
-
 def _resolve_overlaps(layout: CandidateLayout, grid_size: int) -> None:
     """Remove duplicate occupancy by trimming from larger rooms first."""
     room_sizes = {room: len(cells) for room, cells in layout.placement.items()}
@@ -259,40 +219,6 @@ def _resolve_overlaps(layout: CandidateLayout, grid_size: int) -> None:
             if rc in cells:
                 cells.remove(rc)
 
-def grow_mutation(layout: CandidateLayout, rng: random.Random, target_size: Dict[str, int]) -> None:
-    """
-    Targeted growth/shrink: adjust rooms toward their target size near current shape.
-    """
-    grid_size = _infer_grid_size(layout)
-    allowed = layout.active_rooms
-    for room, cells in layout.placement.items():
-        if allowed is not None and room not in allowed:
-            layout.placement[room] = []
-            continue
-        tgt = target_size.get(room, None)
-        if tgt is None:
-            continue
-        if not cells:
-            continue
-        if len(cells) < tgt:
-            needed = tgt - len(cells)
-            rs = [r for r,_ in cells]
-            cs = [c for _,c in cells]
-            rmin, rmax = max(0, min(rs)-1), min(grid_size-1, max(rs)+1)
-            cmin, cmax = max(0, min(cs)-1), min(grid_size-1, max(cs)+1)
-            candidates = [(r,c) for r in range(rmin, rmax+1) for c in range(cmin, cmax+1)]
-            rng.shuffle(candidates)
-            for rc in candidates:
-                if len(cells) >= tgt:
-                    break
-                if rc not in cells:
-                    cells.append(rc)
-        elif len(cells) > tgt:
-            # Trim farthest cells first to encourage compactness around centroid
-            ctr = centroid_of_cells(cells)
-            to_remove = len(cells) - tgt
-            cells.sort(key=lambda rc: manhattan(rc, ctr), reverse=True)
-            del cells[:to_remove]
 
 def copy_layout(layout: CandidateLayout) -> CandidateLayout:
     """Create a deep copy of a CandidateLayout."""
@@ -300,6 +226,7 @@ def copy_layout(layout: CandidateLayout) -> CandidateLayout:
         placement=copy.deepcopy(layout.placement),
         active_rooms=set(layout.active_rooms) if layout.active_rooms is not None else None,
         target_cells=dict(layout.target_cells) if layout.target_cells is not None else None,
+        relationships=copy.deepcopy(layout.relationships) if layout.relationships is not None else None,
     )
 
 def reproduce(parents: list[Genome], cfg: EAConfig, rng: random.Random) -> list[Genome]:
