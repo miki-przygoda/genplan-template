@@ -3,8 +3,16 @@ from __future__ import annotations
 from typing import Dict, List, Optional
 import random
 
-from .constraints import centroid_of_cells, manhattan
-from .evolver import CandidateLayout, Cell, _infer_grid_size
+from .constraints import CandidateLayout, Cell, centroid_of_cells, manhattan
+
+
+def _infer_grid_size(layout: CandidateLayout, fallback: int = 64) -> int:
+    """Best-effort grid size guess from existing cell coordinates."""
+    coords = [rc for cells in layout.placement.values() for rc in cells]
+    if not coords:
+        return fallback
+    max_rc = max(max(r, c) for r, c in coords)
+    return max(fallback, max_rc + 1)
 
 
 def _clamp(val: int, lo: int, hi: int) -> int:
