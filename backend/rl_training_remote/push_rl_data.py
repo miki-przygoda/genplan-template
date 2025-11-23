@@ -52,6 +52,11 @@ def parse_args() -> argparse.Namespace:
         default=[],
         help="Additional files to stage (paths relative to repo root).",
     )
+    parser.add_argument(
+        "--pull-rebase",
+        action="store_true",
+        help="Auto-run 'git pull --rebase' before pushing to avoid non-fast-forward errors.",
+    )
     return parser.parse_args()
 
 
@@ -76,6 +81,9 @@ def main() -> None:
 
     if not args.no_push:
         branch = current_branch(PROJECT_ROOT)
+        if args.pull_rebase:
+            print(f"Pulling latest with rebase on {branch} ...")
+            run(["git", "pull", "--rebase", "origin", branch], cwd=PROJECT_ROOT)
         print(f"Pushing to origin/{branch} ...")
         run(["git", "push", "origin", branch], cwd=PROJECT_ROOT)
     else:

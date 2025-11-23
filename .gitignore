@@ -80,3 +80,4 @@ htmlcov/
 .dmypy.json
 dmypy.json
 EAOutput
+.sh
