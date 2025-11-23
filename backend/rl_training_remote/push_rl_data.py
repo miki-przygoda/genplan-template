@@ -33,6 +33,15 @@ def current_branch(cwd: Path) -> str:
     return result.stdout.strip()
 
 
+def has_changes(cwd: Path, rel_targets: List[str]) -> bool:
+    """Return True if any of the target files are modified or untracked."""
+    status = subprocess.run(
+        ["git", "status", "--porcelain", "--"] + rel_targets, cwd=cwd, capture_output=True, text=True
+    )
+    output = status.stdout.strip()
+    return bool(output)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Commit and push RL training data artifacts.")
     parser.add_argument(
@@ -57,26 +66,30 @@ def main() -> None:
         print("No RL data files found to commit. Expected defaults are missing.", file=sys.stderr)
         sys.exit(1)
 
+    rel_targets = [str(p.relative_to(PROJECT_ROOT)) for p in targets]
+
+    # Check before doing anything expensive
+    if not has_changes(PROJECT_ROOT, rel_targets):
+        print("No changes in RL data to commit. Exiting.")
+        sys.exit(0)
+
     # Pull latest before staging to avoid non-fast-forward issues
     branch = current_branch(PROJECT_ROOT)
     print(f"Pulling latest with rebase on {branch} ...")
     try:
-        run(["git", "pull", "--rebase", "origin", branch], cwd=PROJECT_ROOT)
+        run(["git", "pull", "--rebase", "--autostash", "origin", branch], cwd=PROJECT_ROOT)
     except subprocess.CalledProcessError as exc:
         print(f"git pull --rebase failed: {exc}", file=sys.stderr)
         sys.exit(exc.returncode)
 
     # Stage only the default RL files
-    rel_targets = [str(p.relative_to(PROJECT_ROOT)) for p in targets]
     print(f"Staging files: {', '.join(rel_targets)}")
     run(["git", "add", "--"] + rel_targets, cwd=PROJECT_ROOT)
 
-    # Check if anything is staged
-    status = subprocess.run(
-        ["git", "diff", "--cached", "--quiet"], cwd=PROJECT_ROOT
-    )
+    # Check if anything is staged (after potential rebase/autostash)
+    status = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=PROJECT_ROOT)
     if status.returncode == 0:
-        print("No changes in RL data to commit. Exiting.")
+        print("No changes staged after pull; nothing to commit.")
         sys.exit(0)
 
     print(f"Committing with message: {args.message!r}")
