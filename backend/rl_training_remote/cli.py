@@ -331,6 +331,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     from ver0.rl_runner import run_episode  # type: ignore
 
     start_time = time.time()
+    start_ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(start_time))
     completed: List[Dict[str, Any]] = []
     failures: List[str] = []
     stop_requested = False
@@ -355,10 +356,17 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     jobs_total = len(jobs)
     submitted = 0
 
+    init_msg = (
+        f"Init: episodes={jobs_total}, gens={cfg.generations}, pop={cfg.population_size}, "
+        f"max_workers={max_workers}, runtime_limit={'none' if max_runtime is None else f'{max_runtime/60:.1f} min'}, "
+        f"epsilon={bandit.epsilon:.3f}"
+    )
+
     run_error: Optional[BaseException] = None
 
     try:
         with TerminalUI(refresh_s=args.refresh_s, allow_curses=ui_allow_curses) as ui:
+            ui.push_event(init_msg)
             with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as ex:
                 while True:
                     while not stop_requested and len(pending) < max_workers and submitted < jobs_total:
@@ -430,7 +438,13 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
 
     if stop_requested and stop_reason:
         print(stop_reason)
+    end_time = time.time()
+    end_ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(end_time))
+    elapsed = end_time - start_time
     print(f"Completed {len(completed)} episode(s); {len(failures)} failure(s).")
+    print(f"Started at: {start_ts}")
+    print(f"Finished at: {end_ts}")
+    print(f"Elapsed: {format_duration(elapsed)}")
     if failures:
         for msg in failures:
             print(f" - {msg}")
