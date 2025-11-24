@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional
 import random
+from collections import deque
 
 from .constraints import CandidateLayout, Cell, centroid_of_cells, manhattan
 
@@ -238,3 +239,107 @@ def grow_mutation(layout: CandidateLayout, rng: random.Random, target_size: Dict
             to_remove = len(cells) - tgt
             cells.sort(key=lambda rc: manhattan(rc, ctr), reverse=True)
             del cells[:to_remove]
+
+def _neighbors(rc: Cell, grid_size: int) -> list[Cell]:
+    r, c = rc
+    neigh: list[Cell] = []
+    for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+        nr, nc = r + dr, c + dc
+        if 0 <= nr < grid_size and 0 <= nc < grid_size:
+            neigh.append((nr, nc))
+    return neigh
+
+
+def _connected_components(cells: list[Cell], grid_size: int) -> list[list[Cell]]:
+    """
+    Split a room's cells into 4-connected components.
+    """
+    if not cells:
+        return []
+
+    remaining = set(cells)
+    components: list[list[Cell]] = []
+
+    while remaining:
+        start = remaining.pop()
+        comp = [start]
+        q: deque[Cell] = deque([start])
+
+        while q:
+            rc = q.popleft()
+            for nb in _neighbors(rc, grid_size):
+                if nb in remaining:
+                    remaining.remove(nb)
+                    comp.append(nb)
+                    q.append(nb)
+
+        components.append(comp)
+
+    return components
+
+def _enforce_connected(
+    layout: CandidateLayout,
+    grid_size: int,
+    target_size: Optional[Dict[str, int]] = None,
+) -> None:
+    """
+    For each room, keep only the largest connected component and,
+    if target_size is provided, regrow back toward the desired size
+    around the kept blob (respecting masks if available).
+    """
+    room_masks = getattr(layout, "room_masks", None)
+
+    for room, cells in layout.placement.items():
+        if not cells:
+            continue
+
+        comps = _connected_components(cells, grid_size)
+        if not comps:
+            continue
+
+        # 1) keep largest connected component
+        largest = max(comps, key=len)
+        new_cells = list(largest)
+
+        # 2) optional regrow toward target size
+        tgt = None if target_size is None else target_size.get(room)
+        if tgt is not None and tgt > len(new_cells):
+            mask = room_masks.get(room) if isinstance(room_masks, dict) else None
+            needed = tgt - len(new_cells)
+            frontier = set(new_cells)
+
+            # simple ring-growth from the blob
+            while needed > 0 and frontier:
+                next_frontier: set[Cell] = set()
+                for rc in frontier:
+                    for nb in _neighbors(rc, grid_size):
+                        if nb in new_cells:
+                            continue
+                        if mask is not None:
+                            r, c = nb
+                            if (
+                                r >= mask.shape[0]
+                                or c >= mask.shape[1]
+                                or mask[r, c] == 0
+                            ):
+                                continue
+                        new_cells.append(nb)
+                        needed -= 1
+                        next_frontier.add(nb)
+                        if needed <= 0:
+                            break
+                    if needed <= 0:
+                        break
+                frontier = next_frontier
+
+        layout.placement[room] = new_cells
+
+
+def enforce_connected(
+    layout: CandidateLayout, grid_size: Optional[int] = None, target_size: Optional[Dict[str, int]] = None
+) -> None:
+    """
+    Public helper to enforce 4-connected rooms and optionally regrow toward targets.
+    """
+    gs = grid_size if grid_size is not None else _infer_grid_size(layout)
+    _enforce_connected(layout, gs, target_size)

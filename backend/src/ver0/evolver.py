@@ -21,7 +21,7 @@ from .vars import (
     DEFAULT_GRID_SIZE,
     NO_CHANGE_PENALTY,
 )
-from .mutator import mutate, grow_mutation
+from .mutator import mutate, grow_mutation, enforce_connected
 
 # Type aliases
 MakeRandomFn = Callable[[GridSample, random.Random], CandidateLayout]
@@ -249,8 +249,8 @@ def make_next_generation(
     rng: random.Random,
     make_random: MakeRandomFn,
     mutate_fn: MutateFn = mutate,
-    grow_mutate_fn: GrowMutateFn = grow_mutation,
-    mutation_rate: float | None = None,
+        grow_mutate_fn: GrowMutateFn = grow_mutation,
+        mutation_rate: float | None = None,
 ) -> list[Genome]:
     """Create the next generation using elitism, tournament selection, crossover, and mutation.
     Assumes the incoming population already has fitness evaluated.
@@ -282,6 +282,8 @@ def make_next_generation(
             else:
                 target_sizes[spec.name] = max(4, spec.expected_cells or spec.min_cells)
         grow_mutate_fn(child_layout, rng, target_sizes)
+        # ensure rooms stay 4-connected after growth; regrow toward target if blobs were split
+        enforce_connected(child_layout, grid_size=sample.grid_size, target_size=target_sizes)
 
         new_population.append(Genome(layout=child_layout))
     return new_population
