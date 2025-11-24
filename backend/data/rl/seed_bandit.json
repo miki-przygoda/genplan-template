@@ -1,25 +1,25 @@
 {
-  "epsilon": 0.13558811952,
+  "epsilon": 0.1328763571296,
   "arms": {
     "section": {
-      "pulls": 159,
-      "value": -2938.1662037169763
+      "pulls": 259,
+      "value": -2945.5653688090733
     },
     "mask_guided": {
-      "pulls": 6,
-      "value": -6117.869104587044
+      "pulls": 11,
+      "value": -5817.229271524407
     },
     "compact": {
-      "pulls": 6,
-      "value": -5830.818290295222
+      "pulls": 10,
+      "value": -5918.208765100906
     },
     "section_tight_mask": {
-      "pulls": 10,
-      "value": -5838.2316489337645
+      "pulls": 16,
+      "value": -5913.853724100668
     },
     "mask_sparse": {
-      "pulls": 9,
-      "value": -6287.188369751358
+      "pulls": 14,
+      "value": -6083.728807842697
     }
   }
 }
