@@ -42,3 +42,4 @@ tzdata
 urllib3
 xxhash
 yarl
+seaborn
