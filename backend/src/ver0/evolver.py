@@ -27,7 +27,7 @@ from .mutator import mutate, grow_mutation, enforce_connected
 MakeRandomFn = Callable[[GridSample, random.Random], CandidateLayout]
 MutateFn = Callable[[CandidateLayout, random.Random, float], None]
 GrowMutateFn = Callable[[CandidateLayout, random.Random, Dict[str, int]], None]
-HARD_MUTATION_CAP = 0.5  # safety upper bound to keep mutation work in check
+HARD_MUTATION_CAP = 0.3
 
 def layout_signature(layout: CandidateLayout) -> tuple:
     """Canonical representation of a layout for change detection."""
