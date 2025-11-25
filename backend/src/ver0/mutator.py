@@ -4,7 +4,7 @@ from typing import Dict, List, Optional
 import random
 from collections import deque
 
-from .constraints import CandidateLayout, Cell, centroid_of_cells, manhattan
+from .constraints import CandidateLayout, Cell, centroid_of_cells, manhattan, find_room_holes
 
 LIGHT_MUTATION = False
 
@@ -258,7 +258,13 @@ def mutate(layout: CandidateLayout, rng: random.Random, mutation_rate: float, *,
     _resolve_overlaps(layout, grid_size)
 
 
-def grow_mutation(layout: CandidateLayout, rng: random.Random, target_size: Dict[str, int]) -> None:
+def grow_mutation(
+    layout: CandidateLayout,
+    rng: random.Random,
+    target_size: Dict[str, int],
+    *,
+    fill_holes: bool = True,
+) -> None:
     """
     Targeted growth/shrink: adjust rooms toward their target size near current shape.
     """
@@ -286,6 +292,19 @@ def grow_mutation(layout: CandidateLayout, rng: random.Random, target_size: Dict
             pad = 1
             rr0, rr1 = max(0, rmin - pad), min(grid_size - 1, rmax + pad)
             cc0, cc1 = max(0, cmin - pad), min(grid_size - 1, cmax + pad)
+            if fill_holes:
+                hole_cells = [rc for comp in find_room_holes(cells) for rc in comp]
+                rng.shuffle(hole_cells)
+                for rc in hole_cells:
+                    if len(cells) >= tgt:
+                        break
+                    if rc in cells or rc in occupied_other:
+                        continue
+                    if mask is not None:
+                        r, c = rc
+                        if r >= mask.shape[0] or c >= mask.shape[1] or mask[r, c] == 0:
+                            continue
+                    cells.append(rc)
             # neighbors first
             neighbor_pool: list[Cell] = []
             for rc in cells:

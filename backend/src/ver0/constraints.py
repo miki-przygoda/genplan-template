@@ -33,6 +33,7 @@ class ConstraintScores:
     section_bbox: float = 0.0
     mask: float = 0.0
     relationships: float = 0.0
+    holes: float = 0.0
 
 # ---------- helpers ----------
 def quadrant_of_cell(rc: Cell, grid_size: int = DEFAULT_GRID_SIZE) -> str:
@@ -58,6 +59,47 @@ def perimeter_of_cells(cells: List[Cell]) -> int:
 
 def manhattan(a: Cell, b: Cell) -> int:
     return abs(a[0]-b[0]) + abs(a[1]-b[1])
+
+
+def find_room_holes(cells: List[Cell]) -> List[List[Cell]]:
+    """Return hole components (background regions fully enclosed by the room) in absolute coords."""
+    if not cells:
+        return []
+    rs = [r for r, _ in cells]
+    cs = [c for _, c in cells]
+    rmin, rmax = min(rs), max(rs)
+    cmin, cmax = min(cs), max(cs)
+    h = rmax - rmin + 1
+    w = cmax - cmin + 1
+    grid = [[0] * w for _ in range(h)]
+    for r, c in cells:
+        grid[r - rmin][c - cmin] = 1
+
+    visited = [[False] * w for _ in range(h)]
+    holes: list[list[Cell]] = []
+    dirs = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+
+    for rr in range(h):
+        for cc in range(w):
+            if grid[rr][cc] == 1 or visited[rr][cc]:
+                continue
+            comp: list[tuple[int, int]] = []
+            touches_border = False
+            stack = [(rr, cc)]
+            visited[rr][cc] = True
+            while stack:
+                r, c = stack.pop()
+                comp.append((r, c))
+                if r == 0 or r == h - 1 or c == 0 or c == w - 1:
+                    touches_border = True
+                for dr, dc in dirs:
+                    nr, nc = r + dr, c + dc
+                    if 0 <= nr < h and 0 <= nc < w and not visited[nr][nc] and grid[nr][nc] == 0:
+                        visited[nr][nc] = True
+                        stack.append((nr, nc))
+            if not touches_border:
+                holes.append([(r + rmin, c + cmin) for r, c in comp])
+    return holes
 
 def hierarchical_reference(cand: CandidateLayout, grid_size: int = DEFAULT_GRID_SIZE, base: int = 4) -> dict[str, list[list[tuple[int, int]]]]:
     """
@@ -362,6 +404,16 @@ def score_constraints(sample: GridSample, cand: CandidateLayout) -> ConstraintSc
     section_b = section_bbox_penalty(sample, cand)
     mask = mask_penalty(sample, cand)
     adj = adjacency_penalty(sample, cand)
+    holes = 0.0
+    for _, cells in cand.placement.items():
+        comps = find_room_holes(cells)
+        if not comps:
+            continue
+        rs = [r for r, _ in cells] if cells else [0]
+        cs = [c for _, c in cells] if cells else [0]
+        bbox_area = (max(rs) - min(rs) + 1) * (max(cs) - min(cs) + 1)
+        area_norm = len(cells) / max(1, bbox_area)
+        holes += len(comps) * area_norm
     return ConstraintScores(
         quadrant=quad,
         overlap=overlap,
@@ -376,4 +428,5 @@ def score_constraints(sample: GridSample, cand: CandidateLayout) -> ConstraintSc
         section_bbox=section_b,
         mask=mask,
         relationships=relationship_penalty(sample, cand),
+        holes=holes,
     )
