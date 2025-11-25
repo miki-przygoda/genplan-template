@@ -1,0 +1,25 @@
+{
+  "epsilon": 0.147,
+  "arms": {
+    "section": {
+      "pulls": 46,
+      "value": -3027.001518998167
+    },
+    "mask_guided": {
+      "pulls": 55,
+      "value": -1868.7229646860958
+    },
+    "compact": {
+      "pulls": 53,
+      "value": -1903.2829299303912
+    },
+    "section_tight_mask": {
+      "pulls": 43,
+      "value": -2053.869344280656
+    },
+    "mask_sparse": {
+      "pulls": 43,
+      "value": -1950.0758821512482
+    }
+  }
+}
