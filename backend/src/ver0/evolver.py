@@ -342,13 +342,21 @@ def evolve(sample: GridSample,cfg: EAConfig = EAConfig(),*,make_random: MakeRand
 
     for gen in range(cfg.generations):
         dynamic_weights = _jitter_weights(cfg.weights, rng, gen)
+        prune_compactness = gen % 10 == 0  # run heavier prune every 10th generation
+        if mutate_fn is mutate:
+            def _mutate_wrapper(layout: CandidateLayout, rng: random.Random, rate: float) -> None:
+                mutate_fn(layout, rng, rate, prune_compactness=prune_compactness)
+            mutate_for_gen = _mutate_wrapper
+        else:
+            mutate_for_gen = mutate_fn
+
         population = make_next_generation(
             sample,
             population,
             cfg,
             rng,
             make_random,
-            mutate_fn,
+            mutate_for_gen,
             mutation_rate=current_mutation_rate,
         )
         evaluate_population(sample, population, cfg, weights=dynamic_weights)

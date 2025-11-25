@@ -137,7 +137,7 @@ def relation_based_mutation(layout: CandidateLayout, rng: random.Random, mutatio
         layout.placement[mobile] = new_cells
 
 
-def mutate(layout: CandidateLayout, rng: random.Random, mutation_rate: float) -> None:
+def mutate(layout: CandidateLayout, rng: random.Random, mutation_rate: float, *, prune_compactness: bool = True) -> None:
     """
     Section-aware mutation that nudges cells around target centres, blob-shifts rooms, and trims overlaps.
     """
@@ -250,7 +250,7 @@ def mutate(layout: CandidateLayout, rng: random.Random, mutation_rate: float) ->
         if rng.random() < mutation_rate and len(cells) > 1:
             rng.shuffle(cells)
         # compactness cleanup: trim stray cells then regrow
-        if not LIGHT_MUTATION and rng.random() < 0.5:
+        if prune_compactness and not LIGHT_MUTATION and rng.random() < 0.5:
             _prune_and_regrow(room_name, cells)
     # relationship-based tug after local tweaks
     if not LIGHT_MUTATION:

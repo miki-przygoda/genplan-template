@@ -362,7 +362,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     init_msg = (
         f"Init: episodes={jobs_total}, gens={cfg.generations}, pop={cfg.population_size}, "
         f"max_workers={max_workers}, runtime_limit={'none' if max_runtime is None else f'{max_runtime/60:.1f} min'}, "
-        f"epsilon={bandit.epsilon:.3f}"
+        f"epsilon={bandit.epsilon:.3f}, light_mutation={args.light_mutation}"
     )
 
     run_error: Optional[BaseException] = None
