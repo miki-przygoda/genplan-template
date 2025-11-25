@@ -106,6 +106,18 @@ def make_random_layout(sample: GridSample, rng: random.Random) -> CandidateLayou
         relationships={spec.name: getattr(spec, "relationships", []) or [] for spec in sample.rooms},
     )
 
+
+def _target_sizes_for_sample(sample: GridSample) -> Dict[str, int]:
+    """Desired room sizes based on sample spec and active rooms."""
+    target_sizes: Dict[str, int] = {}
+    allowed = sample.active_room_names
+    for spec in sample.rooms:
+        if (allowed is not None and spec.name not in allowed) or not getattr(spec, "is_active", True):
+            target_sizes[spec.name] = 0
+        else:
+            target_sizes[spec.name] = max(4, spec.expected_cells or spec.min_cells)
+    return target_sizes
+
 @dataclass
 class Genome:
     """One candidate solution in the EA population."""
@@ -155,8 +167,10 @@ def select_parents(population: list[Genome], cfg: EAConfig, rng: random.Random) 
 
 def init_population(sample: GridSample, cfg: EAConfig, rng: random.Random, make_random: MakeRandomFn) -> list[Genome]:
     population: list[Genome] = []
+    target_sizes = _target_sizes_for_sample(sample)
     for _ in range(cfg.population_size):
         layout = make_random(sample, rng)
+        enforce_connected(layout, grid_size=sample.grid_size, target_size=target_sizes)
         population.append(Genome(layout=layout))
     return population
 
@@ -262,6 +276,8 @@ def make_next_generation(
         elite_layout = copy_layout(sorted_pop[i].layout)
         new_population.append(Genome(layout=elite_layout, fitness=sorted_pop[i].fitness, scores=sorted_pop[i].scores))
     
+    target_sizes = _target_sizes_for_sample(sample)
+
     while len(new_population) < cfg.population_size:
         parent1 = tournament_select(population, cfg.tournament_k, rng)
         parent2 = tournament_select(population, cfg.tournament_k, rng)
@@ -273,16 +289,8 @@ def make_next_generation(
         effective_mutation = mutation_rate if mutation_rate is not None else cfg.mutation_rate
         effective_mutation = max(cfg.mutation_floor, min(cfg.mutation_ceiling, effective_mutation))
         mutate_fn(child_layout, rng, effective_mutation)
-        # targeted growth pass
-        target_sizes: Dict[str, int] = {}
-        allowed = sample.active_room_names
-        for spec in sample.rooms:
-            if (allowed is not None and spec.name not in allowed) or not getattr(spec, "is_active", True):
-                target_sizes[spec.name] = 0
-            else:
-                target_sizes[spec.name] = max(4, spec.expected_cells or spec.min_cells)
+        # targeted growth + connectivity enforcement
         grow_mutate_fn(child_layout, rng, target_sizes)
-        # ensure rooms stay 4-connected after growth; regrow toward target if blobs were split
         enforce_connected(child_layout, grid_size=sample.grid_size, target_size=target_sizes)
 
         new_population.append(Genome(layout=child_layout))

@@ -20,6 +20,40 @@ def _clamp(val: int, lo: int, hi: int) -> int:
     return max(lo, min(hi, val))
 
 
+def _attempt_blob_shift(
+    layout: CandidateLayout,
+    room: str,
+    cells: list[Cell],
+    dr: int,
+    dc: int,
+    grid_size: int,
+    mask=None,
+) -> list[Cell] | None:
+    """Try to translate an entire room by (dr, dc). Fail if it would collide or leave bounds/mask."""
+    if dr == 0 and dc == 0:
+        return None
+    if mask is None:
+        room_masks = getattr(layout, "room_masks", None)
+        mask = room_masks.get(room) if isinstance(room_masks, dict) else None
+    occupied_other = {
+        rc for rname, rc_list in layout.placement.items() if rname != room for rc in rc_list
+    }
+    shifted: list[Cell] = []
+    for (r, c) in cells:
+        nr = _clamp(r + dr, 0, grid_size - 1)
+        nc = _clamp(c + dc, 0, grid_size - 1)
+        new_rc = (nr, nc)
+        if new_rc in occupied_other:
+            return None
+        if mask is not None:
+            if nr >= mask.shape[0] or nc >= mask.shape[1]:
+                return None
+            if mask[nr, nc] == 0:
+                return None
+        shifted.append(new_rc)
+    return shifted
+
+
 def _resolve_overlaps(layout: CandidateLayout, grid_size: int) -> None:
     """Remove duplicate occupancy by trimming from larger rooms first."""
     room_sizes = {room: len(cells) for room, cells in layout.placement.items()}
@@ -45,31 +79,6 @@ DIR_VECTORS = {
     "east_of": (0, 1),
     "west_of": (0, -1),
 }
-
-
-def _attempt_blob_shift(room: str, cells: list[Cell], dr: int, dc: int, layout: CandidateLayout, grid_size: int) -> list[Cell] | None:
-    """Try to translate an entire room by (dr, dc). Fail if it would collide or leave bounds/mask."""
-    if dr == 0 and dc == 0:
-        return None
-    room_masks = getattr(layout, "room_masks", None)
-    mask = room_masks.get(room) if isinstance(room_masks, dict) else None
-    occupied_other = {
-        rc for rname, rc_list in layout.placement.items() if rname != room for rc in rc_list
-    }
-    shifted: list[Cell] = []
-    for (r, c) in cells:
-        nr = _clamp(r + dr, 0, grid_size - 1)
-        nc = _clamp(c + dc, 0, grid_size - 1)
-        new_rc = (nr, nc)
-        if new_rc in occupied_other:
-            return None
-        if mask is not None:
-            if nr >= mask.shape[0] or nc >= mask.shape[1]:
-                return None
-            if mask[nr, nc] == 0:
-                return None
-        shifted.append(new_rc)
-    return shifted
 
 
 def _relation_step(anchor_ctr: Cell, mobile_ctr: Cell, rel_vec: Cell) -> tuple[int, int]:
@@ -115,7 +124,7 @@ def relation_based_mutation(layout: CandidateLayout, rng: random.Random, mutatio
     m_ctr = centroid_of_cells(mobile_cells)
     a_ctr = centroid_of_cells(anchor_cells)
     dr, dc = _relation_step(a_ctr, m_ctr, rel_vec)
-    new_cells = _attempt_blob_shift(mobile, mobile_cells, dr, dc, layout, grid_size)
+    new_cells = _attempt_blob_shift(layout, mobile, mobile_cells, dr, dc, grid_size)
     if new_cells:
         layout.placement[mobile] = new_cells
 
@@ -129,33 +138,48 @@ def mutate(layout: CandidateLayout, rng: random.Random, mutation_rate: float) ->
     targets = layout.target_cells or {}
     room_masks = getattr(layout, "room_masks", None)
 
-    def _attempt_blob_shift(room: str, cells: list[Cell], dr: int, dc: int) -> list[Cell] | None:
-        if dr == 0 and dc == 0:
-            return None
-        mask = room_masks.get(room) if isinstance(room_masks, dict) else None
-        occupied_other = {
-            rc for rname, rc_list in layout.placement.items() if rname != room for rc in rc_list
-        }
-        shifted: list[Cell] = []
-        for (r, c) in cells:
-            nr = _clamp(r + dr, 0, grid_size - 1)
-            nc = _clamp(c + dc, 0, grid_size - 1)
-            new_rc = (nr, nc)
-            if new_rc in occupied_other:
-                return None
-            if mask is not None:
-                if nr >= mask.shape[0] or nc >= mask.shape[1]:
-                    return None
-                if mask[nr, nc] == 0:
-                    return None
-            shifted.append(new_rc)
-        return shifted
-
     def _sample_near(room: str) -> Cell:
+        """
+        Pick a cell near existing geometry.
+        Bias toward neighbors of current cells; otherwise sample within a
+        small window around the room's bounding box (fallback to target cell window).
+        """
+        cells = layout.placement.get(room, [])
+        mask = room_masks.get(room) if isinstance(room_masks, dict) else None
+        if cells:
+            rs = [r for r, _ in cells]
+            cs = [c for _, c in cells]
+            rmin, rmax = min(rs), max(rs)
+            cmin, cmax = min(cs), max(cs)
+            span_r = rmax - rmin + 1
+            span_c = cmax - cmin + 1
+            # Tight window around current bbox
+            pad = max(1, min(span_r, span_c) // 3)
+            rr0 = max(0, rmin - pad)
+            rr1 = min(grid_size - 1, rmax + pad)
+            cc0 = max(0, cmin - pad)
+            cc1 = min(grid_size - 1, cmax + pad)
+            # First, try a neighbor of existing geometry
+            neighbor_pool: list[Cell] = []
+            for rc in cells:
+                for nb in _neighbors(rc, grid_size):
+                    if nb in cells or nb in neighbor_pool:
+                        continue
+                    if mask is not None:
+                        r, c = nb
+                        if r >= mask.shape[0] or c >= mask.shape[1] or mask[r, c] == 0:
+                            continue
+                    neighbor_pool.append(nb)
+            if neighbor_pool and rng.random() < 0.85:
+                return rng.choice(neighbor_pool)
+            # Otherwise sample within the bbox window
+            return (rng.randint(rr0, rr1), rng.randint(cc0, cc1))
+
+        # No geometry yet: fall back to target cell window or global random
         center = targets.get(room)
         if center is None:
             return (rng.randrange(grid_size), rng.randrange(grid_size))
-        half = max(1, grid_size // 10)
+        half = max(1, grid_size // 16)
         r0 = max(0, center[0] - half)
         r1 = min(grid_size - 1, center[0] + half)
         c0 = max(0, center[1] - half)
@@ -175,7 +199,8 @@ def mutate(layout: CandidateLayout, rng: random.Random, mutation_rate: float) ->
                 ctr = centroid_of_cells(cells)
                 dr = _clamp(target[0] - ctr[0], -1, 1)
                 dc = _clamp(target[1] - ctr[1], -1, 1)
-                new_cells = _attempt_blob_shift(room_name, cells, dr, dc)
+                mask = room_masks.get(room_name) if isinstance(room_masks, dict) else None
+                new_cells = _attempt_blob_shift(layout, room_name, cells, dr, dc, grid_size, mask=mask)
                 if new_cells:
                     cells[:] = new_cells
         # single-cell jitter near target
