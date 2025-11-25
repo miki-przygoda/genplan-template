@@ -20,6 +20,10 @@ def _clamp(val: int, lo: int, hi: int) -> int:
     return max(lo, min(hi, val))
 
 
+def _occupied_other(layout: CandidateLayout, room: str) -> set[Cell]:
+    return {rc for rname, rc_list in layout.placement.items() if rname != room for rc in rc_list}
+
+
 def _attempt_blob_shift(
     layout: CandidateLayout,
     room: str,
@@ -35,9 +39,7 @@ def _attempt_blob_shift(
     if mask is None:
         room_masks = getattr(layout, "room_masks", None)
         mask = room_masks.get(room) if isinstance(room_masks, dict) else None
-    occupied_other = {
-        rc for rname, rc_list in layout.placement.items() if rname != room for rc in rc_list
-    }
+    occupied_other = _occupied_other(layout, room)
     shifted: list[Cell] = []
     for (r, c) in cells:
         nr = _clamp(r + dr, 0, grid_size - 1)
@@ -138,6 +140,23 @@ def mutate(layout: CandidateLayout, rng: random.Random, mutation_rate: float) ->
     targets = layout.target_cells or {}
     room_masks = getattr(layout, "room_masks", None)
 
+    def _prune_and_regrow(room: str, cells: list[Cell]) -> None:
+        """Trim farthest cells then regrow using neighbor-biased sampling to reduce sprawl."""
+        if len(cells) <= 6:
+            return
+        ctr = centroid_of_cells(cells)
+        # remove up to 10% but keep at least 4 cells
+        remove_count = max(1, int(len(cells) * 0.1))
+        remove_count = min(remove_count, max(0, len(cells) - 4))
+        if remove_count <= 0:
+            return
+        cells.sort(key=lambda rc: manhattan(rc, ctr), reverse=True)
+        trimmed = cells[:-remove_count]
+        target_len = len(cells)
+        layout.placement[room] = trimmed
+        while len(layout.placement[room]) < target_len:
+            layout.placement[room].append(_sample_near(room))
+
     def _sample_near(room: str) -> Cell:
         """
         Pick a cell near existing geometry.
@@ -219,6 +238,9 @@ def mutate(layout: CandidateLayout, rng: random.Random, mutation_rate: float) ->
             layout.placement[room_name] = shifted
         if rng.random() < mutation_rate and len(cells) > 1:
             rng.shuffle(cells)
+        # compactness cleanup: trim stray cells then regrow
+        if rng.random() < 0.5:
+            _prune_and_regrow(room_name, cells)
     # relationship-based tug after local tweaks
     relation_based_mutation(layout, rng, mutation_rate)
     _resolve_overlaps(layout, grid_size)
@@ -231,6 +253,7 @@ def grow_mutation(layout: CandidateLayout, rng: random.Random, target_size: Dict
     grid_size = _infer_grid_size(layout)
     allowed = layout.active_rooms
     room_masks = getattr(layout, "room_masks", None)
+    occupied_cache = {room: _occupied_other(layout, room) for room in layout.placement}
     for room, cells in layout.placement.items():
         if allowed is not None and room not in allowed:
             layout.placement[room] = []
@@ -241,22 +264,43 @@ def grow_mutation(layout: CandidateLayout, rng: random.Random, target_size: Dict
         if not cells:
             continue
         mask = room_masks.get(room) if isinstance(room_masks, dict) else None
+        occupied_other = occupied_cache.get(room, _occupied_other(layout, room))
         if len(cells) < tgt:
             needed = tgt - len(cells)
-            rs = [r for r,_ in cells]
-            cs = [c for _,c in cells]
-            rmin, rmax = max(0, min(rs)-1), min(grid_size-1, max(rs)+1)
-            cmin, cmax = max(0, min(cs)-1), min(grid_size-1, max(cs)+1)
-            candidates = [(r,c) for r in range(rmin, rmax+1) for c in range(cmin, cmax+1)]
+            rs = [r for r, _ in cells]
+            cs = [c for _, c in cells]
+            rmin, rmax = max(0, min(rs) - 1), min(grid_size - 1, max(rs) + 1)
+            cmin, cmax = max(0, min(cs) - 1), min(grid_size - 1, max(cs) + 1)
+            pad = 1
+            rr0, rr1 = max(0, rmin - pad), min(grid_size - 1, rmax + pad)
+            cc0, cc1 = max(0, cmin - pad), min(grid_size - 1, cmax + pad)
+            # neighbors first
+            neighbor_pool: list[Cell] = []
+            for rc in cells:
+                for nb in _neighbors(rc, grid_size):
+                    if nb in cells or nb in neighbor_pool or nb in occupied_other:
+                        continue
+                    if mask is not None:
+                        r, c = nb
+                        if r >= mask.shape[0] or c >= mask.shape[1] or mask[r, c] == 0:
+                            continue
+                    neighbor_pool.append(nb)
+            rng.shuffle(neighbor_pool)
+            for nb in neighbor_pool:
+                if len(cells) >= tgt:
+                    break
+                cells.append(nb)
+            # fallback: tight bbox sampling
+            candidates = [(r, c) for r in range(rr0, rr1 + 1) for c in range(cc0, cc1 + 1)]
             rng.shuffle(candidates)
             for rc in candidates:
                 if len(cells) >= tgt:
                     break
-                if rc in cells:
+                if rc in cells or rc in occupied_other:
                     continue
                 if mask is not None:
-                    r,c = rc
-                    if r >= mask.shape[0] or c >= mask.shape[1] or mask[r,c] == 0:
+                    r, c = rc
+                    if r >= mask.shape[0] or c >= mask.shape[1] or mask[r, c] == 0:
                         continue
                 cells.append(rc)
         elif len(cells) > tgt:
