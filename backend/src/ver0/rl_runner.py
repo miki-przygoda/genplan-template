@@ -49,7 +49,18 @@ def run_episode(job: Tuple[int, int, str, Dict[str, Any], str, int, int, bool | 
     seed_fn = SEEDING_REGISTRY[seed_name]
     set_light_mutation(bool(light_mutation))
     start = time.perf_counter()
-    best, _, history = evolve(sample, cfg=cfg, make_random=seed_fn, mutate_fn=mutate)
+    best, _, history = evolve(
+        sample,
+        cfg=cfg,
+        make_random=seed_fn,
+        mutate_fn=mutate,
+        stagnation_limit=50,
+        mean_plateau_window=10,
+        mean_plateau_delta=0.5,
+        best_plateau_window=20,
+        best_plateau_delta=0.1,
+        time_budget_s=40.0,
+    )
     duration = time.perf_counter() - start
     best_f = best.fitness if best.fitness is not None else float("inf")
 

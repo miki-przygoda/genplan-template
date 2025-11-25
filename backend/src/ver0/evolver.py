@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import List, Tuple, Dict, Iterable, Callable
 import random
 import copy
+import time
 
 from pathlib import Path
 
@@ -317,7 +318,19 @@ def inject_diversity(
         replaced = True
     return replaced
 
-def evolve(sample: GridSample,cfg: EAConfig = EAConfig(),*,make_random: MakeRandomFn = make_random_layout,mutate_fn: MutateFn = mutate,) -> tuple[Genome, list[Genome], dict[str, list[float]]]:
+def evolve(
+    sample: GridSample,
+    cfg: EAConfig = EAConfig(),
+    *,
+    make_random: MakeRandomFn = make_random_layout,
+    mutate_fn: MutateFn = mutate,
+    stagnation_limit: int | None = None,
+    mean_plateau_window: int = 10,
+    mean_plateau_delta: float = 0.5,
+    best_plateau_window: int = 20,
+    best_plateau_delta: float = 0.1,
+    time_budget_s: float | None = None,
+) -> tuple[Genome, list[Genome], dict[str, list[float]]]:
     """
     Run the evolutionary algorithm and return:
       - best genome
@@ -334,6 +347,7 @@ def evolve(sample: GridSample,cfg: EAConfig = EAConfig(),*,make_random: MakeRand
     stagnation = 0
     current_mutation_rate = max(cfg.mutation_floor, cfg.mutation_rate)
     last_best_signature: tuple | None = None
+    loop_start = time.perf_counter()
 
     # record generation 0
     fitnesses = [g.fitness for g in population if g.fitness is not None]
@@ -341,6 +355,8 @@ def evolve(sample: GridSample,cfg: EAConfig = EAConfig(),*,make_random: MakeRand
     history_mean.append(sum(fitnesses) / len(fitnesses))
 
     for gen in range(cfg.generations):
+        if time_budget_s is not None and (time.perf_counter() - loop_start) >= time_budget_s:
+            break
         dynamic_weights = _jitter_weights(cfg.weights, rng, gen)
         prune_compactness = gen % 10 == 0  # run heavier prune every 10th generation
         if mutate_fn is mutate:
@@ -422,6 +438,15 @@ def evolve(sample: GridSample,cfg: EAConfig = EAConfig(),*,make_random: MakeRand
                 stagnation = 0
         if best.fitness is not None:
             last_best_signature = layout_signature(best.layout)
+
+        if stagnation_limit is not None and stagnation >= stagnation_limit:
+            break
+        if len(history_mean) > mean_plateau_window:
+            if abs(history_mean[-1] - history_mean[-1 - mean_plateau_window]) < mean_plateau_delta:
+                break
+        if len(history_best) > best_plateau_window:
+            if abs(history_best[-1] - history_best[-1 - best_plateau_window]) < best_plateau_delta:
+                break
 
     history = {"best": history_best, "mean": history_mean}
     return best, population, history

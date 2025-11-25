@@ -142,6 +142,9 @@ class TerminalUI:
         else:
             lines.append("CPU metrics unavailable (install psutil for detailed stats)")
 
+        if state.get("init_msg"):
+            lines.append(str(state["init_msg"]))
+
         if state.get("last_result"):
             res = state["last_result"]
             lines.append(
@@ -418,6 +421,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
                         "last_result": last_result,
                         "log_path": str(log_path),
                         "state_path": str(state_path),
+                        "init_msg": init_msg,
                     }
 
                     if ui.render(state):
