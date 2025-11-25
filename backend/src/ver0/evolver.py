@@ -115,7 +115,9 @@ def _target_sizes_for_sample(sample: GridSample) -> Dict[str, int]:
         if (allowed is not None and spec.name not in allowed) or not getattr(spec, "is_active", True):
             target_sizes[spec.name] = 0
         else:
-            target_sizes[spec.name] = max(4, spec.expected_cells or spec.min_cells)
+            base = spec.expected_cells if spec.expected_cells is not None else spec.min_cells
+            base = base or 0
+            target_sizes[spec.name] = max(4, base)
     return target_sizes
 
 @dataclass
@@ -356,6 +358,10 @@ def evolve(sample: GridSample,cfg: EAConfig = EAConfig(),*,make_random: MakeRand
 
         history_best.append(gen_best)
         history_mean.append(gen_mean)
+
+        # Heartbeat for long-running runs
+        if gen % 10 == 0:
+            print(f"[evolve] gen {gen:03d}/{cfg.generations} best={gen_best:.3f} mean={gen_mean:.3f}")
 
         candidate = min(population, key=_fitness_value)
         penalized = False

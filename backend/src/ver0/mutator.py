@@ -154,8 +154,10 @@ def mutate(layout: CandidateLayout, rng: random.Random, mutation_rate: float) ->
         trimmed = cells[:-remove_count]
         target_len = len(cells)
         layout.placement[room] = trimmed
-        while len(layout.placement[room]) < target_len:
+        guard = grid_size * grid_size  # safety bound
+        while len(layout.placement[room]) < target_len and guard > 0:
             layout.placement[room].append(_sample_near(room))
+            guard -= 1
 
     def _sample_near(room: str) -> Cell:
         """
