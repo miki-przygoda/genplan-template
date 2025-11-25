@@ -11,13 +11,14 @@ from pathlib import Path
 from typing import Dict, Tuple, Any
 
 from .evolver import evolve, EAConfig, mutate
+from .mutator import set_light_mutation
 from .seeders import SEEDING_REGISTRY
 from .grid_encoder import encode_floorplan_to_grid
 from .fitness import Weights
 import time
 
 
-def run_episode(job: Tuple[int, int, str, Dict[str, Any], str, int, int]) -> Dict[str, Any]:
+def run_episode(job: Tuple[int, int, str, Dict[str, Any], str, int, int, bool | None]) -> Dict[str, Any]:
     """
     Execute one EA episode.
 
@@ -26,7 +27,11 @@ def run_episode(job: Tuple[int, int, str, Dict[str, Any], str, int, int]) -> Dic
     Returns:
         dict with episode, floor_id, seed, best_fitness, history
     """
-    ep_idx, floor_id, seed_name, cfg_dict, project_root_str, grid_size, rotate_k = job
+    if len(job) == 7:
+        ep_idx, floor_id, seed_name, cfg_dict, project_root_str, grid_size, rotate_k = job
+        light_mutation = False
+    else:
+        ep_idx, floor_id, seed_name, cfg_dict, project_root_str, grid_size, rotate_k, light_mutation = job
     project_root = Path(project_root_str)
 
     # Rehydrate config and weights
@@ -42,6 +47,7 @@ def run_episode(job: Tuple[int, int, str, Dict[str, Any], str, int, int]) -> Dic
     sample = encode_floorplan_to_grid(floor_dir, grid_size=grid_size, rotate_k=rotate_k)
 
     seed_fn = SEEDING_REGISTRY[seed_name]
+    set_light_mutation(bool(light_mutation))
     start = time.perf_counter()
     best, _, history = evolve(sample, cfg=cfg, make_random=seed_fn, mutate_fn=mutate)
     duration = time.perf_counter() - start

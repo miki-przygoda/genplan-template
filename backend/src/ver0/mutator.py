@@ -6,6 +6,12 @@ from collections import deque
 
 from .constraints import CandidateLayout, Cell, centroid_of_cells, manhattan
 
+LIGHT_MUTATION = False
+
+
+def set_light_mutation(enabled: bool) -> None:
+    global LIGHT_MUTATION
+    LIGHT_MUTATION = enabled
 
 def _infer_grid_size(layout: CandidateLayout, fallback: int = 64) -> int:
     """Best-effort grid size guess from existing cell coordinates."""
@@ -135,6 +141,9 @@ def mutate(layout: CandidateLayout, rng: random.Random, mutation_rate: float) ->
     """
     Section-aware mutation that nudges cells around target centres, blob-shifts rooms, and trims overlaps.
     """
+    if LIGHT_MUTATION:
+        mutation_rate *= 0.6  # lighter touch
+
     grid_size = _infer_grid_size(layout)
     allowed = layout.active_rooms
     targets = layout.target_cells or {}
@@ -241,10 +250,11 @@ def mutate(layout: CandidateLayout, rng: random.Random, mutation_rate: float) ->
         if rng.random() < mutation_rate and len(cells) > 1:
             rng.shuffle(cells)
         # compactness cleanup: trim stray cells then regrow
-        if rng.random() < 0.5:
+        if not LIGHT_MUTATION and rng.random() < 0.5:
             _prune_and_regrow(room_name, cells)
     # relationship-based tug after local tweaks
-    relation_based_mutation(layout, rng, mutation_rate)
+    if not LIGHT_MUTATION:
+        relation_based_mutation(layout, rng, mutation_rate)
     _resolve_overlaps(layout, grid_size)
 
 

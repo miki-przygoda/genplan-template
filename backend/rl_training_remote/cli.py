@@ -196,6 +196,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--fixed-floors", type=int, nargs="*", default=None, help="Specific floor ids to cycle through.")
     parser.add_argument("--no-ui", action="store_true", help="Disable curses UI; print summaries instead.")
     parser.add_argument("--seed", type=int, default=None, help="Random seed for reproducibility.")
+    parser.add_argument("--light-mutation", action="store_true", help="Use lighter mutation/repair for faster remote runs.")
     return parser.parse_args(argv)
 
 
@@ -327,6 +328,8 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         grid_size=grid_size,
         rotate_k=rotate_k,
     )
+    # Append light_mutation flag to each job for the runner
+    jobs = [job + (args.light_mutation,) for job in jobs]
 
     from ver0.rl_runner import run_episode  # type: ignore
 
