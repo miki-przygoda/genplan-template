@@ -361,9 +361,6 @@ def evolve(sample: GridSample,cfg: EAConfig = EAConfig(),*,make_random: MakeRand
         history_mean.append(gen_mean)
 
         # Heartbeat for long-running runs
-        if gen % 10 == 0:
-            print(f"[evolve pid={pid}] gen {gen:03d}/{cfg.generations} best={gen_best:.3f} mean={gen_mean:.3f}", flush=True)
-
         candidate = min(population, key=_fitness_value)
         penalized = False
         candidate_signature = layout_signature(candidate.layout)
