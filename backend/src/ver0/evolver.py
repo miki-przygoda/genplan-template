@@ -27,6 +27,7 @@ from .mutator import mutate, grow_mutation, enforce_connected
 MakeRandomFn = Callable[[GridSample, random.Random], CandidateLayout]
 MutateFn = Callable[[CandidateLayout, random.Random, float], None]
 GrowMutateFn = Callable[[CandidateLayout, random.Random, Dict[str, int]], None]
+HARD_MUTATION_CAP = 0.5  # safety upper bound to keep mutation work in check
 
 def layout_signature(layout: CandidateLayout) -> tuple:
     """Canonical representation of a layout for change detection."""
@@ -289,7 +290,7 @@ def make_next_generation(
             parent2_layout = copy_layout(parent2.layout)
             crossover(child_layout, parent2_layout, rng)
         effective_mutation = mutation_rate if mutation_rate is not None else cfg.mutation_rate
-        effective_mutation = max(cfg.mutation_floor, min(cfg.mutation_ceiling, effective_mutation))
+        effective_mutation = max(cfg.mutation_floor, min(cfg.mutation_ceiling, HARD_MUTATION_CAP, effective_mutation))
         mutate_fn(child_layout, rng, effective_mutation)
         # targeted growth + connectivity enforcement
         grow_mutate_fn(child_layout, rng, target_sizes)
@@ -361,7 +362,7 @@ def evolve(sample: GridSample,cfg: EAConfig = EAConfig(),*,make_random: MakeRand
 
         # Heartbeat for long-running runs
         if gen % 10 == 0:
-            print(f"[evolve] gen {gen:03d}/{cfg.generations} best={gen_best:.3f} mean={gen_mean:.3f}")
+            print(f"[evolve pid={pid}] gen {gen:03d}/{cfg.generations} best={gen_best:.3f} mean={gen_mean:.3f}", flush=True)
 
         candidate = min(population, key=_fitness_value)
         penalized = False
@@ -412,7 +413,7 @@ def evolve(sample: GridSample,cfg: EAConfig = EAConfig(),*,make_random: MakeRand
                     candidate = min(population, key=_fitness_value)
                     if candidate.fitness is not None and (best.fitness is None or candidate.fitness < best.fitness):
                         best = candidate
-                current_mutation_rate = min(cfg.mutation_ceiling, current_mutation_rate * cfg.mutation_boost)
+                current_mutation_rate = min(cfg.mutation_ceiling, HARD_MUTATION_CAP, current_mutation_rate * cfg.mutation_boost)
                 stagnation = 0
         if best.fitness is not None:
             last_best_signature = layout_signature(best.layout)

@@ -376,6 +376,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
                             break
                         pending.add(ex.submit(run_episode, job))
                         submitted += 1
+                        ui.push_event(f"Submitted episode {job[0]+1}/{jobs_total} (running {len(pending)}/{max_workers})")
 
                     if not pending and (stop_requested or submitted >= jobs_total):
                         break
