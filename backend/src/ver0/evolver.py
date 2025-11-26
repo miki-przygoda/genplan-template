@@ -352,6 +352,7 @@ def evolve(
     current_mutation_rate = max(cfg.mutation_floor, cfg.mutation_rate)
     last_best_signature: tuple | None = None
     loop_start = time.perf_counter()
+    target_sizes = _target_sizes_for_sample(sample)
 
     # record generation 0
     fitnesses = [g.fitness for g in population if g.fitness is not None]
