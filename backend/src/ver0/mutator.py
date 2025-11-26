@@ -5,6 +5,7 @@ import random
 from collections import deque
 
 from .constraints import CandidateLayout, Cell, centroid_of_cells, manhattan, find_room_holes
+from .constraints import hierarchical_reference  # light import, used for adjacency hints
 
 LIGHT_MUTATION = False
 
@@ -137,7 +138,16 @@ def relation_based_mutation(layout: CandidateLayout, rng: random.Random, mutatio
         layout.placement[mobile] = new_cells
 
 
-def mutate(layout: CandidateLayout, rng: random.Random, mutation_rate: float, *, prune_compactness: bool = True) -> None:
+def mutate(
+    layout: CandidateLayout,
+    rng: random.Random,
+    mutation_rate: float,
+    *,
+    prune_compactness: bool = True,
+    target_sizes: Optional[Dict[str, int]] = None,
+    global_mask: Optional[list[list[int]]] = None,
+    generation_index: int | None = None,
+) -> None:
     """
     Section-aware mutation that nudges cells around target centres, blob-shifts rooms, and trims overlaps.
     """
@@ -176,6 +186,7 @@ def mutate(layout: CandidateLayout, rng: random.Random, mutation_rate: float, *,
         """
         cells = layout.placement.get(room, [])
         mask = room_masks.get(room) if isinstance(room_masks, dict) else None
+        target_cell = targets.get(room)
         if cells:
             rs = [r for r, _ in cells]
             cs = [c for _, c in cells]
@@ -189,7 +200,6 @@ def mutate(layout: CandidateLayout, rng: random.Random, mutation_rate: float, *,
             rr1 = min(grid_size - 1, rmax + pad)
             cc0 = max(0, cmin - pad)
             cc1 = min(grid_size - 1, cmax + pad)
-            # First, try a neighbor of existing geometry
             neighbor_pool: list[Cell] = []
             for rc in cells:
                 for nb in _neighbors(rc, grid_size):
@@ -202,7 +212,14 @@ def mutate(layout: CandidateLayout, rng: random.Random, mutation_rate: float, *,
                     neighbor_pool.append(nb)
             if neighbor_pool and rng.random() < 0.85:
                 return rng.choice(neighbor_pool)
-            # Otherwise sample within the bbox window
+            # Mix between bbox-based and target-cell window
+            if target_cell and rng.random() < 0.4:
+                half = max(1, grid_size // 16)
+                r0 = max(0, target_cell[0] - half)
+                r1 = min(grid_size - 1, target_cell[0] + half)
+                c0 = max(0, target_cell[1] - half)
+                c1 = min(grid_size - 1, target_cell[1] + half)
+                return (rng.randint(r0, r1), rng.randint(c0, c1))
             return (rng.randint(rr0, rr1), rng.randint(cc0, cc1))
 
         # No geometry yet: fall back to target cell window or global random
@@ -252,9 +269,9 @@ def mutate(layout: CandidateLayout, rng: random.Random, mutation_rate: float, *,
         # compactness cleanup: trim stray cells then regrow
         if prune_compactness and not LIGHT_MUTATION and rng.random() < 0.5:
             _prune_and_regrow(room_name, cells)
-    # relationship-based tug after local tweaks
-    if not LIGHT_MUTATION:
-        relation_based_mutation(layout, rng, mutation_rate)
+        # relationship/adjacency tug after local tweaks
+        if not LIGHT_MUTATION:
+            relation_based_mutation(layout, rng, mutation_rate)
     _resolve_overlaps(layout, grid_size)
 
 
@@ -264,6 +281,8 @@ def grow_mutation(
     target_size: Dict[str, int],
     *,
     fill_holes: bool = True,
+    enforce_conn: bool = False,
+    global_mask=None,
 ) -> None:
     """
     Targeted growth/shrink: adjust rooms toward their target size near current shape.
@@ -272,6 +291,8 @@ def grow_mutation(
     allowed = layout.active_rooms
     room_masks = getattr(layout, "room_masks", None)
     occupied_cache = {room: _occupied_other(layout, room) for room in layout.placement}
+    if enforce_conn:
+        _enforce_connected(layout, grid_size, target_size)
     for room, cells in layout.placement.items():
         if allowed is not None and room not in allowed:
             layout.placement[room] = []

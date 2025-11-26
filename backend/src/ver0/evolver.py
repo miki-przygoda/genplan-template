@@ -270,6 +270,8 @@ def make_next_generation(
     grow_mutate_fn: GrowMutateFn = grow_mutation,
     mutation_rate: float | None = None,
     fill_holes: bool = True,
+    enforce_conn: bool = False,
+    generation_index: int | None = None,
 ) -> list[Genome]:
     """Create the next generation using elitism, tournament selection, crossover, and mutation.
     Assumes the incoming population already has fitness evaluated.
@@ -295,7 +297,7 @@ def make_next_generation(
         effective_mutation = max(cfg.mutation_floor, min(cfg.mutation_ceiling, HARD_MUTATION_CAP, effective_mutation))
         mutate_fn(child_layout, rng, effective_mutation)
         # targeted growth + connectivity enforcement
-        grow_mutate_fn(child_layout, rng, target_sizes, fill_holes=fill_holes)
+        grow_mutate_fn(child_layout, rng, target_sizes, fill_holes=fill_holes, enforce_conn=enforce_conn)
         enforce_connected(child_layout, grid_size=sample.grid_size, target_size=target_sizes)
 
         new_population.append(Genome(layout=child_layout))
@@ -362,19 +364,20 @@ def evolve(
         dynamic_weights = _jitter_weights(cfg.weights, rng, gen)
         prune_compactness = gen % 10 == 0  # run heavier prune every 10th generation
         fill_holes = gen % 10 == 0
+        enforce_conn = prune_compactness
         if mutate_fn is mutate:
             def _mutate_wrapper(layout: CandidateLayout, rng: random.Random, rate: float) -> None:
-                mutate_fn(layout, rng, rate, prune_compactness=prune_compactness)
+                mutate_fn(layout, rng, rate, prune_compactness=prune_compactness, target_sizes=target_sizes, generation_index=gen)
             mutate_for_gen = _mutate_wrapper
         else:
             mutate_for_gen = mutate_fn
         if grow_mutate_fn is grow_mutation:
             def _grow_wrapper(layout: CandidateLayout, rng: random.Random, targets: Dict[str, int], fill_holes_flag: bool = True) -> None:
-                grow_mutation(layout, rng, targets, fill_holes=fill_holes_flag)
+                grow_mutation(layout, rng, targets, fill_holes=fill_holes_flag, enforce_conn=enforce_conn)
             grow_for_gen = _grow_wrapper
         else:
             def _grow_wrapper(layout: CandidateLayout, rng: random.Random, targets: Dict[str, int], fill_holes_flag: bool = True) -> None:
-                grow_mutate_fn(layout, rng, targets, fill_holes=fill_holes_flag)
+                grow_mutate_fn(layout, rng, targets, fill_holes_flag, enforce_conn=enforce_conn)
             grow_for_gen = _grow_wrapper
 
         population = make_next_generation(
@@ -387,6 +390,8 @@ def evolve(
             grow_for_gen,
             mutation_rate=current_mutation_rate,
             fill_holes=fill_holes,
+            enforce_conn=enforce_conn,
+            generation_index=gen,
         )
         evaluate_population(sample, population, cfg, weights=dynamic_weights)
 
