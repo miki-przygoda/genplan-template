@@ -27,7 +27,7 @@ from .mutator import mutate, grow_mutation, enforce_connected
 # Type aliases
 MakeRandomFn = Callable[[GridSample, random.Random], CandidateLayout]
 MutateFn = Callable[[CandidateLayout, random.Random, float], None]
-GrowMutateFn = Callable[[CandidateLayout, random.Random, Dict[str, int], bool], None]
+GrowMutateFn = Callable[[CandidateLayout, random.Random, Dict[str, int], bool, bool], None]
 HARD_MUTATION_CAP = 0.3
 
 def layout_signature(layout: CandidateLayout) -> tuple:
@@ -297,7 +297,7 @@ def make_next_generation(
         effective_mutation = max(cfg.mutation_floor, min(cfg.mutation_ceiling, HARD_MUTATION_CAP, effective_mutation))
         mutate_fn(child_layout, rng, effective_mutation)
         # targeted growth + connectivity enforcement
-        grow_mutate_fn(child_layout, rng, target_sizes, fill_holes=fill_holes, enforce_conn=enforce_conn)
+        grow_mutate_fn(child_layout, rng, target_sizes, fill_holes, enforce_conn)
         enforce_connected(child_layout, grid_size=sample.grid_size, target_size=target_sizes)
 
         new_population.append(Genome(layout=child_layout))
@@ -373,12 +373,12 @@ def evolve(
         else:
             mutate_for_gen = mutate_fn
         if grow_mutate_fn is grow_mutation:
-            def _grow_wrapper(layout: CandidateLayout, rng: random.Random, targets: Dict[str, int], fill_holes_flag: bool = True) -> None:
-                grow_mutation(layout, rng, targets, fill_holes=fill_holes_flag, enforce_conn=enforce_conn)
+            def _grow_wrapper(layout: CandidateLayout, rng: random.Random, targets: Dict[str, int], fill_holes_flag: bool = True, enforce_conn_flag: bool = False) -> None:
+                grow_mutation(layout, rng, targets, fill_holes=fill_holes_flag, enforce_conn=enforce_conn_flag)
             grow_for_gen = _grow_wrapper
         else:
-            def _grow_wrapper(layout: CandidateLayout, rng: random.Random, targets: Dict[str, int], fill_holes_flag: bool = True) -> None:
-                grow_mutate_fn(layout, rng, targets, fill_holes_flag, enforce_conn=enforce_conn)
+            def _grow_wrapper(layout: CandidateLayout, rng: random.Random, targets: Dict[str, int], fill_holes_flag: bool = True, enforce_conn_flag: bool = False) -> None:
+                grow_mutate_fn(layout, rng, targets, fill_holes_flag, enforce_conn_flag)
             grow_for_gen = _grow_wrapper
 
         population = make_next_generation(
