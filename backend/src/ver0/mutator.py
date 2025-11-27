@@ -5,7 +5,7 @@ import random
 from collections import deque
 
 from .constraints import CandidateLayout, Cell, centroid_of_cells, manhattan, find_room_holes
-from .constraints import hierarchical_reference  # light import, used for adjacency hints
+from .constraints import hierarchical_reference
 
 LIGHT_MUTATION = False
 
@@ -31,15 +31,7 @@ def _occupied_other(layout: CandidateLayout, room: str) -> set[Cell]:
     return {rc for rname, rc_list in layout.placement.items() if rname != room for rc in rc_list}
 
 
-def _attempt_blob_shift(
-    layout: CandidateLayout,
-    room: str,
-    cells: list[Cell],
-    dr: int,
-    dc: int,
-    grid_size: int,
-    mask=None,
-) -> list[Cell] | None:
+def _attempt_blob_shift(layout: CandidateLayout, room: str, cells: list[Cell], dr: int, dc: int, grid_size: int, mask=None) -> list[Cell] | None:
     """Try to translate an entire room by (dr, dc). Fail if it would collide or leave bounds/mask."""
     if dr == 0 and dc == 0:
         return None
@@ -138,16 +130,7 @@ def relation_based_mutation(layout: CandidateLayout, rng: random.Random, mutatio
         layout.placement[mobile] = new_cells
 
 
-def mutate(
-    layout: CandidateLayout,
-    rng: random.Random,
-    mutation_rate: float,
-    *,
-    prune_compactness: bool = True,
-    target_sizes: Optional[Dict[str, int]] = None,
-    global_mask: Optional[list[list[int]]] = None,
-    generation_index: int | None = None,
-) -> None:
+def mutate(layout: CandidateLayout, rng: random.Random, mutation_rate: float, *, prune_compactness: bool = True, target_sizes: Optional[Dict[str, int]] = None, global_mask: Optional[list[list[int]]] = None, generation_index: int | None = None) -> None:
     """
     Section-aware mutation that nudges cells around target centres, blob-shifts rooms, and trims overlaps.
     """
@@ -275,15 +258,7 @@ def mutate(
     _resolve_overlaps(layout, grid_size)
 
 
-def grow_mutation(
-    layout: CandidateLayout,
-    rng: random.Random,
-    target_size: Dict[str, int],
-    *,
-    fill_holes: bool = True,
-    enforce_conn: bool = False,
-    global_mask=None,
-) -> None:
+def grow_mutation(layout: CandidateLayout,rng: random.Random,target_size: Dict[str, int],*,fill_holes: bool = True,enforce_conn: bool = False,global_mask=None,) -> None:
     """
     Targeted growth/shrink: adjust rooms toward their target size near current shape.
     """
@@ -398,11 +373,7 @@ def _connected_components(cells: list[Cell], grid_size: int) -> list[list[Cell]]
 
     return components
 
-def _enforce_connected(
-    layout: CandidateLayout,
-    grid_size: int,
-    target_size: Optional[Dict[str, int]] = None,
-) -> None:
+def _enforce_connected(layout: CandidateLayout,grid_size: int,target_size: Optional[Dict[str, int]] = None,) -> None:
     """
     For each room, keep only the largest connected component and,
     if target_size is provided, regrow back toward the desired size
@@ -457,8 +428,7 @@ def _enforce_connected(
 
 
 def enforce_connected(
-    layout: CandidateLayout, grid_size: Optional[int] = None, target_size: Optional[Dict[str, int]] = None
-) -> None:
+    layout: CandidateLayout, grid_size: Optional[int] = None, target_size: Optional[Dict[str, int]] = None) -> None:
     """
     Public helper to enforce 4-connected rooms and optionally regrow toward targets.
     """

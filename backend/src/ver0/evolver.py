@@ -297,7 +297,7 @@ def make_next_generation(
         effective_mutation = max(cfg.mutation_floor, min(cfg.mutation_ceiling, HARD_MUTATION_CAP, effective_mutation))
         mutate_fn(child_layout, rng, effective_mutation)
         # targeted growth + connectivity enforcement
-        grow_mutate_fn(child_layout, rng, target_sizes, fill_holes, enforce_conn)
+        grow_mutate_fn(child_layout, rng, target_sizes, fill_holes=fill_holes, enforce_conn=enforce_conn)
         enforce_connected(child_layout, grid_size=sample.grid_size, target_size=target_sizes)
 
         new_population.append(Genome(layout=child_layout))

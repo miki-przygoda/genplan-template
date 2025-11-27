@@ -366,7 +366,7 @@ def _normalise_relationship(raw: str) -> RoomToRoomRelationship | None:
         if alias in candidate:
             return relationship
     if candidate in RELATIONSHIP_INVERSES:
-        return candidate  # Already canonical.
+        return candidate
     return None
 
 
