@@ -15,12 +15,14 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import multiprocessing
+import queue
 import json
 import random
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 DEFAULT_MAX_WORKERS = 6
 DEFAULT_RUNS = 3
@@ -107,12 +109,72 @@ FIXED_FLOOR_IDS = [
 ]
 
 
+def format_duration(seconds: float) -> str:
+    seconds = int(seconds)
+    mins, sec = divmod(seconds, 60)
+    hours, mins = divmod(mins, 60)
+    if hours:
+        return f"{hours:02d}:{mins:02d}:{sec:02d}"
+    return f"{mins:02d}:{sec:02d}"
+
+
 def find_project_root() -> Path:
     """Walk upwards to locate the repo root that contains backend/src."""
     for candidate in [Path.cwd().resolve(), *Path.cwd().resolve().parents]:
         if (candidate / "backend" / "src").exists():
             return candidate
     raise RuntimeError("Could not locate backend/src. Run from inside the repo.")
+
+
+class TerminalUI:
+    """Single-line stdout refresher for live status (minimal flicker)."""
+
+    def __init__(self, refresh_s: float = 0.5, enabled: bool = True) -> None:
+        self.refresh_s = refresh_s
+        self.enabled = enabled
+        self._last_print = 0.0
+        self._last_len = 0
+        self._header_printed = False
+
+    def print_header(self, total: int, log_dir: Path) -> None:
+        if not self.enabled or self._header_printed:
+            return
+        print(f"EA eval runs (RL then manual), total={total}, logs -> {log_dir}")
+        self._header_printed = True
+
+    def render(self, state: Dict[str, Any], *, force: bool = False) -> None:
+        if not self.enabled:
+            return
+        now = time.time()
+        if not force and (now - self._last_print < self.refresh_s):
+            return
+
+        active = state.get("active", {})
+        line = (
+            f"[{format_duration(state['elapsed'])}] "
+            f"done {state['completed']}/{state['total']} "
+            f"| running {state['running']} | queued {state['queued']} | failed {state['failed']} "
+            f"| active RL {active.get('rl', 0)} / manual {active.get('manual', 0)}"
+        )
+        last = state.get("last_result")
+        if last:
+            line += (
+                f" | last floor {last['floor_id']:03d} "
+                f"RL {last['best_fitness']['rl']:.3f} / manual {last['best_fitness']['manual']:.3f}"
+            )
+
+        pad = max(0, self._last_len - len(line))
+        sys.stdout.write("\r" + line + " " * pad)
+        sys.stdout.flush()
+        self._last_len = len(line)
+        self._last_print = now
+
+    def finish(self) -> None:
+        """Move to the next line after the final render."""
+        if self.enabled:
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -149,6 +211,17 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         nargs="*",
         default=None,
         help="Optional override for the floor ID pool (defaults to notebook list).",
+    )
+    parser.add_argument(
+        "--refresh-s",
+        type=float,
+        default=0.5,
+        help="Status refresh interval for live logging.",
+    )
+    parser.add_argument(
+        "--no-ui",
+        action="store_true",
+        help="Disable live status updates (still prints per-run summaries).",
     )
     return parser.parse_args(argv)
 
@@ -310,7 +383,7 @@ def _build_config(rng_seed: int):
     )
 
 
-def _run_single(job: Dict[str, Any]) -> Dict[str, Any]:
+def _run_single(job: Dict[str, Any], event_q=None) -> Dict[str, Any]:
     """Worker entrypoint: run RL + manual EAs back-to-back for one floor."""
     project_root = Path(job["project_root"])
     sys.path.insert(0, str(project_root / "backend" / "src"))
@@ -340,7 +413,11 @@ def _run_single(job: Dict[str, Any]) -> Dict[str, Any]:
     manual_seed_name = next(iter(SEEDING_REGISTRY.keys()))
     seed_fn_manual = SEEDING_REGISTRY[manual_seed_name]
 
+    if event_q is not None:
+        event_q.put({"type": "stage", "run_idx": run_idx, "floor_id": floor_id, "stage": "rl"})
     hist_rl, best_rl = _run_ea(sample, cfg, seed_fn_rl, cfg_seed_offset=0)
+    if event_q is not None:
+        event_q.put({"type": "stage", "run_idx": run_idx, "floor_id": floor_id, "stage": "manual"})
     hist_manual, best_manual = _run_ea(sample, cfg, seed_fn_manual, cfg_seed_offset=1234)
 
     log_path = _save_run_log(
@@ -423,22 +500,77 @@ def main(argv: Sequence[str] | None = None) -> None:
     start = time.time()
     results: List[Dict[str, Any]] = []
     failures: List[str] = []
+    last_result: Optional[Dict[str, Any]] = None
 
-    with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as ex:
-        future_map = {ex.submit(_run_single, job): job for job in jobs}
-        for fut in concurrent.futures.as_completed(future_map):
-            job = future_map[fut]
-            try:
-                res = fut.result()
-                results.append(res)
-                print(
-                    f"[run {res['run_idx']:03d}] floor {res['floor_id']:03d} "
-                    f"RL {res['best_fitness']['rl']:.3f} | manual {res['best_fitness']['manual']:.3f} "
-                    f"-> {res['log_path']}"
+    ui = TerminalUI(refresh_s=args.refresh_s, enabled=not args.no_ui)
+    active_stages: Dict[int, str] = {}
+
+    with multiprocessing.Manager() as mp_manager:
+        event_q = mp_manager.Queue()
+        ui.print_header(total=len(jobs), log_dir=log_dir)
+
+        with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as ex:
+            future_map = {ex.submit(_run_single, job, event_q): job for job in jobs}
+            pending = set(future_map.keys())
+
+            while pending:
+                done, pending = concurrent.futures.wait(
+                    pending, timeout=args.refresh_s, return_when=concurrent.futures.FIRST_COMPLETED
                 )
-            except Exception as exc:  # noqa: BLE001
-                failures.append(f"run {job['run_idx']:03d} floor {job['floor_id']:03d}: {exc!r}")
-                print(f"Run failed: {failures[-1]}")
+
+                # Drain stage updates
+                while True:
+                    try:
+                        evt = event_q.get_nowait()
+                    except queue.Empty:
+                        break
+                    if evt.get("type") == "stage":
+                        active_stages[evt["run_idx"]] = evt.get("stage", "")
+
+                for fut in done:
+                    job = future_map[fut]
+                    active_stages.pop(job["run_idx"], None)
+                    try:
+                        res = fut.result()
+                        results.append(res)
+                        last_result = res
+                    except Exception as exc:  # noqa: BLE001
+                        failures.append(f"run {job['run_idx']:03d} floor {job['floor_id']:03d}: {exc!r}")
+
+                active_counts = {"rl": 0, "manual": 0}
+                for stage in active_stages.values():
+                    if stage in active_counts:
+                        active_counts[stage] += 1
+
+                state = {
+                    "elapsed": time.time() - start,
+                    "completed": len(results),
+                    "total": len(jobs),
+                    "running": len(pending),
+                    "queued": max(0, len(jobs) - len(results) - len(pending)),
+                    "failed": len(failures),
+                    "last_result": last_result,
+                    "log_dir": str(log_dir),
+                    "active": active_counts,
+                }
+                ui.render(state)
+
+    # Final state render
+    ui.render(
+        {
+            "elapsed": time.time() - start,
+            "completed": len(results),
+            "total": len(jobs),
+            "running": 0,
+            "queued": 0,
+            "failed": len(failures),
+            "last_result": last_result,
+            "log_dir": str(log_dir),
+            "active": {"rl": 0, "manual": 0},
+        },
+        force=True,
+    )
+    ui.finish()
 
     elapsed = time.time() - start
     print(f"Finished {len(results)} run(s) with {len(failures)} failure(s) in {elapsed/60:.1f} min.")
