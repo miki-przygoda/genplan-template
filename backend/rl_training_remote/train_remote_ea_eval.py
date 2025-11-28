@@ -17,10 +17,12 @@ import argparse
 import concurrent.futures
 import multiprocessing
 import queue
+import copy
 import json
 import random
 import sys
 import time
+import uuid
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -67,6 +69,7 @@ class TerminalUI:
         self._last_print = 0.0
         self._last_len = 0
         self._header_printed = False
+        self._last_line = ""
 
     def print_header(self, total: int, log_dir: Path) -> None:
         if not self.enabled or self._header_printed:
@@ -90,16 +93,25 @@ class TerminalUI:
         )
         last = state.get("last_result")
         if last:
+            bf = last.get("best_fitness", {})
+            rl_val = bf.get("ea_rl", bf.get("rl"))
+            manual_val = bf.get("ea_only", bf.get("manual"))
+            rl_str = f"{rl_val:.3f}" if isinstance(rl_val, (int, float)) else "n/a"
+            manual_str = f"{manual_val:.3f}" if isinstance(manual_val, (int, float)) else "n/a"
             line += (
                 f" | last floor {last['floor_id']:03d} "
-                f"RL {last['best_fitness']['rl']:.3f} / manual {last['best_fitness']['manual']:.3f}"
+                f"RL {rl_str} / manual {manual_str}"
             )
+
+        if not force and line == self._last_line:
+            return
 
         pad = max(0, self._last_len - len(line))
         sys.stdout.write("\r" + line + " " * pad)
         sys.stdout.flush()
         self._last_len = len(line)
         self._last_print = now
+        self._last_line = line
 
     def finish(self) -> None:
         """Move to the next line after the final render."""
@@ -199,29 +211,41 @@ def _config_summary(cfg) -> Dict[str, Any]:
 def _save_run_log(
     *,
     log_dir: Path,
-    run_label: str,
+    base_run_id: str,
     floor_id: int,
     grid_size: int,
     rotate_k: int,
-    seed_name_rl: str,
-    manual_seed_name: str,
-    hist_rl: Iterable[float],
-    hist_manual: Iterable[float],
-    best_rl: float,
-    best_manual: float,
+    runs: List[Dict[str, Any]],
     cfg,
 ) -> Path:
     now = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
-    run_id = f"{now}-{run_label}"
+    run_id = f"{now}-{base_run_id}"
+    history_map: Dict[str, Iterable[float]] = {}
+    best_map: Dict[str, float] = {}
+    for rec in runs:
+        variant = rec.get("variant")
+        hist = rec.get("history", [])
+        best_val = rec.get("best_fitness_final")
+        if variant:
+            history_map[variant] = hist
+            best_map[variant] = best_val
+            # Compatibility aliases
+            if variant == "ea_rl":
+                history_map["rl"] = hist
+                best_map["rl"] = best_val
+            if variant == "ea_only":
+                history_map["manual"] = hist
+                best_map["manual"] = best_val
+
     payload = {
         "run_id": run_id,
         "timestamp_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "floor_id": floor_id,
         "grid_size": grid_size,
         "rotate_k": rotate_k,
-        "seeders": {"rl": seed_name_rl, "manual": manual_seed_name},
-        "history": {"rl": list(hist_rl), "manual": list(hist_manual)},
-        "best_fitness": {"rl": best_rl, "manual": best_manual},
+        "runs": runs,
+        "history": history_map,
+        "best_fitness": best_map,
         "config": _config_summary(cfg),
     }
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -230,25 +254,136 @@ def _save_run_log(
     return log_path
 
 
-def _run_ea(sample, cfg, seed_fn, *, cfg_seed_offset: int = 0) -> Tuple[List[float], float]:
-    """Execute the EA for one seeding strategy and collect per-generation best fitness."""
-    rng = random.Random(cfg.random_seed + cfg_seed_offset)
+def _run_ea(
+    sample,
+    cfg,
+    seed_fn,
+    *,
+    cfg_seed_offset: int = 0,
+    variant: str,
+    seeder_name: str,
+    bandit_arm_index: Optional[int],
+    bandit_epsilon: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Execute the EA for one seeding strategy and collect detailed stats."""
+    rng_seed = cfg.random_seed + cfg_seed_offset
+    rng = random.Random(rng_seed)
 
     from ver0.evolver import evaluate_population, init_population, make_next_generation, mutate  # type: ignore
+    from ver0.real_plan_classifier import classify_real_floorplan  # type: ignore
+    from ver0.vars import REALISM_THRESHOLD  # type: ignore
 
     pop = init_population(sample, cfg, rng, seed_fn)
     evaluate_population(sample, pop, cfg)
+
+    def _fitness(g):
+        return g.fitness if g.fitness is not None else float("inf")
+
     history: List[float] = []
+    best_so_far = float("inf")
+    best_gen = 0
+    best_genome_copy = None
+
+    # Initial stats
+    best_initial_genome = min(pop, key=_fitness)
+    best_fitness_initial = _fitness(best_initial_genome)
+    mean_initial = sum(_fitness(g) for g in pop) / max(1, len(pop))
+
+    current_mutation_rate = max(cfg.mutation_floor, cfg.mutation_rate)
+    mutation_rates: List[float] = []
+    stagnation = 0
+    stagnation_events = 0
+    diversity_injections = 0
+    loop_start = time.time()
 
     for gen in range(cfg.generations):
         if gen > 0:
-            pop = make_next_generation(sample, pop, cfg, rng, seed_fn, mutate)
+            prune_compactness = gen % 10 == 0
+            fill_holes = gen % 10 == 0
+            enforce_conn = prune_compactness
+            pop = make_next_generation(
+                sample,
+                pop,
+                cfg,
+                rng,
+                seed_fn,
+                mutate,
+                mutation_rate=current_mutation_rate,
+                fill_holes=fill_holes,
+                enforce_conn=enforce_conn,
+                generation_index=gen,
+            )
             evaluate_population(sample, pop, cfg)
-        best = min(pop, key=lambda g: g.fitness if g.fitness is not None else float("inf"))
-        history.append(best.fitness)
+        best = min(pop, key=_fitness)
+        history.append(_fitness(best))
+        if _fitness(best) < best_so_far:
+            best_so_far = _fitness(best)
+            best_gen = gen
+            best_genome_copy = copy.deepcopy(best)
+            stagnation = 0
+            current_mutation_rate = max(cfg.mutation_floor, cfg.mutation_rate)
+        else:
+            stagnation += 1
+            if cfg.stagnation_threshold > 0 and stagnation >= cfg.stagnation_threshold:
+                replaced = False
+                from ver0.evolver import inject_diversity  # type: ignore
 
-    best_final = min(pop, key=lambda g: g.fitness if g.fitness is not None else float("inf"))
-    return history, best_final.fitness
+                replaced = inject_diversity(
+                    pop,
+                    sample,
+                    cfg,
+                    rng,
+                    seed_fn,
+                    fraction=cfg.restart_fraction,
+                )
+                if replaced:
+                    diversity_injections += 1
+                    stagnation_events += 1
+                    evaluate_population(sample, pop, cfg)
+                    best = min(pop, key=_fitness)
+                    history[-1] = _fitness(best)
+                    if _fitness(best) < best_so_far:
+                        best_so_far = _fitness(best)
+                        best_gen = gen
+                        best_genome_copy = copy.deepcopy(best)
+                current_mutation_rate = min(cfg.mutation_ceiling, 0.3, current_mutation_rate * cfg.mutation_boost)
+                stagnation = 0
+        mutation_rates.append(current_mutation_rate)
+
+    best_genome = best_genome_copy or best_initial_genome
+    mean_final = sum(_fitness(g) for g in pop) / max(1, len(pop))
+    realism_ok, realism_score, _ = classify_real_floorplan(
+        sample, best_genome.layout, threshold=REALISM_THRESHOLD, scores=best_genome.scores
+    )
+
+    constraints = {}
+    if best_genome.scores:
+        constraints = {k: getattr(best_genome.scores, k, None) for k in vars(best_genome.scores)}
+
+    return {
+        "run_id": uuid.uuid4().hex,
+        "variant": variant,
+        "seeder_name": seeder_name,
+        "bandit_arm_index": bandit_arm_index,
+        "random_seed": rng_seed,
+        "history": history,
+        "best_fitness_final": best_so_far,
+        "mean_fitness_final": mean_final,
+        "best_fitness_initial": best_fitness_initial,
+        "mean_fitness_initial": mean_initial,
+        "gen_at_best": best_gen,
+        "num_generations": len(history),
+        "best_constraints": constraints,
+        "realism_score": realism_score,
+        "is_real": bool(realism_ok),
+        "duration_s": time.time() - loop_start,
+        "stagnation_events": stagnation_events,
+        "num_diversity_injections": diversity_injections,
+        "avg_mutation_rate": sum(mutation_rates) / max(1, len(mutation_rates)),
+        "max_mutation_rate": max(mutation_rates) if mutation_rates else None,
+        "bandit_epsilon": bandit_epsilon,
+        "bandit_reward": -best_so_far if variant == "ea_rl" else None,
+    }
 
 
 def _build_config(rng_seed: int):
@@ -342,28 +477,42 @@ def _run_single(job: Dict[str, Any], event_q=None) -> Dict[str, Any]:
 
     bandit = make_seed_bandit(project_root / "backend" / "data" / "rl" / "seed_bandit.json", epsilon=0.05, rng=random.Random(rng_seed))
     seed_name_rl, seed_fn_rl = bandit.select()
+    seeder_names = list(SEEDING_REGISTRY.keys())
+    bandit_arm_index = seeder_names.index(seed_name_rl) if seed_name_rl in seeder_names else None
     manual_seed_name = next(iter(SEEDING_REGISTRY.keys()))
     seed_fn_manual = SEEDING_REGISTRY[manual_seed_name]
 
     if event_q is not None:
         event_q.put({"type": "stage", "run_idx": run_idx, "floor_id": floor_id, "stage": "rl"})
-    hist_rl, best_rl = _run_ea(sample, cfg, seed_fn_rl, cfg_seed_offset=0)
+    run_rl = _run_ea(
+        sample,
+        cfg,
+        seed_fn_rl,
+        cfg_seed_offset=0,
+        variant="ea_rl",
+        seeder_name=seed_name_rl,
+        bandit_arm_index=bandit_arm_index,
+        bandit_epsilon=bandit.epsilon,
+    )
     if event_q is not None:
         event_q.put({"type": "stage", "run_idx": run_idx, "floor_id": floor_id, "stage": "manual"})
-    hist_manual, best_manual = _run_ea(sample, cfg, seed_fn_manual, cfg_seed_offset=1234)
+    run_manual = _run_ea(
+        sample,
+        cfg,
+        seed_fn_manual,
+        cfg_seed_offset=1234,
+        variant="ea_only",
+        seeder_name=manual_seed_name,
+        bandit_arm_index=None,
+    )
 
     log_path = _save_run_log(
         log_dir=log_dir,
-        run_label=f"r{run_idx:03d}",
+        base_run_id=f"r{run_idx:03d}",
         floor_id=floor_id,
         grid_size=grid_size,
         rotate_k=rotate_k,
-        seed_name_rl=seed_name_rl,
-        manual_seed_name=manual_seed_name,
-        hist_rl=hist_rl,
-        hist_manual=hist_manual,
-        best_rl=best_rl,
-        best_manual=best_manual,
+        runs=[run_rl, run_manual],
         cfg=cfg,
     )
 
@@ -372,7 +521,12 @@ def _run_single(job: Dict[str, Any], event_q=None) -> Dict[str, Any]:
         "floor_id": floor_id,
         "log_path": str(log_path),
         "seeders": {"rl": seed_name_rl, "manual": manual_seed_name},
-        "best_fitness": {"rl": best_rl, "manual": best_manual},
+        "best_fitness": {
+            "ea_rl": run_rl["best_fitness_final"],
+            "ea_only": run_manual["best_fitness_final"],
+            "rl": run_rl["best_fitness_final"],
+            "manual": run_manual["best_fitness_final"],
+        },
     }
 
 
