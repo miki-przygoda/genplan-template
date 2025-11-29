@@ -24,14 +24,7 @@ class ArmStats:
 
 
 class SeedBandit:
-    def __init__(
-        self,
-        *,
-        state_path: Path,
-        epsilon: float = 0.15,
-        actions: Optional[Dict[str, SeederFn]] = None,
-        rng: Optional[random.Random] = None,
-    ) -> None:
+    def __init__(self, *, state_path: Path, epsilon: float = 0.15, actions: Optional[Dict[str, SeederFn]] = None, rng: Optional[random.Random] = None) -> None:
         self.state_path = state_path
         self.epsilon = epsilon
         self.rng = rng or random.Random()

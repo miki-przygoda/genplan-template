@@ -121,12 +121,7 @@ def download_datasets():
 # Dataset Loading Functions
 # ============================================================================
 
-def load_floorplans_dataset(
-    dataset_path: Optional[Path] = None,
-    *,
-    dataset_name: str = DEFAULT_DATASET_NAME,
-    split: Optional[str] = "train",
-) -> Dataset:
+def load_floorplans_dataset(dataset_path: Optional[Path] = None, *, dataset_name: str = DEFAULT_DATASET_NAME, split: Optional[str] = "train") -> Dataset:
     """
     Load the FloorPlans970 dataset from disk if available; otherwise fall back
     to Hugging Face Hub.
@@ -452,15 +447,7 @@ def _cleanup_old_metadata_backups(directory: Path) -> None:
 # Main Workflow
 # ============================================================================
 
-def process_dataset(
-    dataset_path: Optional[Path] = None,
-    *,
-    dataset_name: str = DEFAULT_DATASET_NAME,
-    split: Optional[str] = "train",
-    image_column: Optional[str] = None,
-    output_dir: Optional[Path] = None,
-    force_download: bool = False,
-):
+def process_dataset(dataset_path: Optional[Path] = None, *, dataset_name: str = DEFAULT_DATASET_NAME, split: Optional[str] = "train", image_column: Optional[str] = None, output_dir: Optional[Path] = None, force_download: bool = False):
     """
     Complete workflow: download (if needed), load dataset, extract masks, and save to processed.
     
@@ -687,4 +674,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

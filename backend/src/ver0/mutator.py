@@ -427,8 +427,7 @@ def _enforce_connected(layout: CandidateLayout,grid_size: int,target_size: Optio
         layout.placement[room] = new_cells
 
 
-def enforce_connected(
-    layout: CandidateLayout, grid_size: Optional[int] = None, target_size: Optional[Dict[str, int]] = None) -> None:
+def enforce_connected(layout: CandidateLayout, grid_size: Optional[int] = None, target_size: Optional[Dict[str, int]] = None) -> None:
     """
     Public helper to enforce 4-connected rooms and optionally regrow toward targets.
     """

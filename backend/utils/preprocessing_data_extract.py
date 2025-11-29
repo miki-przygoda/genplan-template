@@ -48,12 +48,7 @@ class DataInspectionError(RuntimeError):
     """Raised when an expected dataset field cannot be resolved."""
 
 
-def load_floorplans_dataset(
-    dataset_path: Optional[Path] = None,
-    *,
-    dataset_name: str = DEFAULT_DATASET_NAME,
-    split: Optional[str] = "train",
-) -> Dataset:
+def load_floorplans_dataset(dataset_path: Optional[Path] = None, *, dataset_name: str = DEFAULT_DATASET_NAME, split: Optional[str] = "train") -> Dataset:
     """
     Load the FloorPlans970 dataset from disk if available; otherwise fall back
     to Hugging Face Hub.
@@ -93,12 +88,7 @@ def resolve_column(column_names: Sequence[str], candidates: Sequence[str]) -> st
     )
 
 
-def detect_missing_text_records(
-    dataset: Dataset,
-    *,
-    text_column: str,
-    id_column: Optional[str] = None,
-) -> List[Any]:
+def detect_missing_text_records(dataset: Dataset, *, text_column: str, id_column: Optional[str] = None) -> List[Any]:
     """Return identifiers for records with missing or empty supporting text."""
     missing_ids: List[Any] = []
     for idx, record in enumerate(dataset):
@@ -140,13 +130,7 @@ def _extract_image_dimensions(image: Any) -> Tuple[int, int]:
     raise DataInspectionError(f"Unsupported image type for shape extraction: {type(image)}")
 
 
-def validate_image_shapes(
-    dataset: Dataset,
-    *,
-    image_column: str,
-    expected_shape: Tuple[int, int] = EXPECTED_IMAGE_SHAPE,
-    id_column: Optional[str] = None,
-) -> List[Tuple[Any, Tuple[int, int]]]:
+def validate_image_shapes(dataset: Dataset, *, image_column: str, expected_shape: Tuple[int, int] = EXPECTED_IMAGE_SHAPE, id_column: Optional[str] = None) -> List[Tuple[Any, Tuple[int, int]]]:
     """
     Check that all images in the dataset match the expected width/height.
 
@@ -170,15 +154,7 @@ def validate_image_shapes(
     return mismatches
 
 
-def export_sample_images(
-    dataset: Dataset,
-    *,
-    image_column: str,
-    destination: Path,
-    id_column: Optional[str] = None,
-    num_samples: int = 10,
-    seed: int = 42,
-) -> List[Path]:
+def export_sample_images(dataset: Dataset, *, image_column: str, destination: Path, id_column: Optional[str] = None, num_samples: int = 10, seed: int = 42) -> List[Path]:
     """Write a random subset of images to disk for manual inspection."""
     if num_samples <= 0:
         return []
@@ -229,19 +205,7 @@ def write_json(path: Path, data: Any) -> None:
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
 
 
-def run_data_audit(
-    dataset_path: Optional[Path],
-    *,
-    dataset_name: str = DEFAULT_DATASET_NAME,
-    split: Optional[str] = "train",
-    text_column: Optional[str] = None,
-    id_column: Optional[str] = None,
-    image_column: Optional[str] = None,
-    expected_shape: Tuple[int, int] = EXPECTED_IMAGE_SHAPE,
-    no_text_output: Optional[Path] = DEFAULT_NO_TEXT_PATH,
-    sample_output_dir: Optional[Path] = None,
-    sample_count: int = 0,
-) -> dict[str, Any]:
+def run_data_audit(dataset_path: Optional[Path], *, dataset_name: str = DEFAULT_DATASET_NAME, split: Optional[str] = "train", text_column: Optional[str] = None, id_column: Optional[str] = None, image_column: Optional[str] = None, expected_shape: Tuple[int, int] = EXPECTED_IMAGE_SHAPE, no_text_output: Optional[Path] = DEFAULT_NO_TEXT_PATH, sample_output_dir: Optional[Path] = None, sample_count: int = 0) -> dict[str, Any]:
     """Run the full data inspection workflow and return a summary."""
     dataset = load_floorplans_dataset(dataset_path, dataset_name=dataset_name, split=split)
 

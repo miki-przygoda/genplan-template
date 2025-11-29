@@ -208,16 +208,7 @@ def _config_summary(cfg) -> Dict[str, Any]:
     return summary
 
 
-def _save_run_log(
-    *,
-    log_dir: Path,
-    base_run_id: str,
-    floor_id: int,
-    grid_size: int,
-    rotate_k: int,
-    runs: List[Dict[str, Any]],
-    cfg,
-) -> Path:
+def _save_run_log(*, log_dir: Path, base_run_id: str, floor_id: int, grid_size: int, rotate_k: int, runs: List[Dict[str, Any]], cfg) -> Path:
     now = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     run_id = f"{now}-{base_run_id}"
     history_map: Dict[str, Iterable[float]] = {}
@@ -254,17 +245,7 @@ def _save_run_log(
     return log_path
 
 
-def _run_ea(
-    sample,
-    cfg,
-    seed_fn,
-    *,
-    cfg_seed_offset: int = 0,
-    variant: str,
-    seeder_name: str,
-    bandit_arm_index: Optional[int],
-    bandit_epsilon: Optional[float] = None,
-) -> Dict[str, Any]:
+def _run_ea(sample, cfg, seed_fn, *, cfg_seed_offset: int = 0, variant: str, seeder_name: str, bandit_arm_index: Optional[int], bandit_epsilon: Optional[float] = None) -> Dict[str, Any]:
     """Execute the EA for one seeding strategy and collect detailed stats."""
     rng_seed = cfg.random_seed + cfg_seed_offset
     rng = random.Random(rng_seed)
@@ -530,16 +511,7 @@ def _run_single(job: Dict[str, Any], event_q=None) -> Dict[str, Any]:
     }
 
 
-def build_jobs(
-    *,
-    runs: int,
-    floor_pool: Sequence[int],
-    rng: random.Random,
-    log_dir: Path,
-    project_root: Path,
-    grid_size: int | None,
-    rotate_k: int | None,
-) -> List[Dict[str, Any]]:
+def build_jobs(*, runs: int, floor_pool: Sequence[int], rng: random.Random, log_dir: Path, project_root: Path, grid_size: int | None, rotate_k: int | None) -> List[Dict[str, Any]]:
     jobs: List[Dict[str, Any]] = []
     for idx in range(runs):
         floor_id = rng.choice(floor_pool)

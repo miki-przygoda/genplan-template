@@ -103,13 +103,7 @@ def _area_to_min_cells(area_px: int, img_wh=(512, 512), grid_size=DEFAULT_GRID_S
 def _text_section_override(name_to_text_section: Dict[str, Section], name: str, fallback: Section) -> Section:
     return name_to_text_section.get(name, fallback)
 
-def _scale_rotate_polygon(
-    polygon: list[tuple[float, float]],
-    *,
-    img_wh: tuple[int, int],
-    grid_size: int,
-    rotate_k: int,
-) -> list[tuple[float, float]]:
+def _scale_rotate_polygon(polygon: list[tuple[float, float]], *, img_wh: tuple[int, int], grid_size: int, rotate_k: int) -> list[tuple[float, float]]:
     """Rotate polygon in image coords, then scale it into grid coordinates."""
     w, h = img_wh
     rotated = [_rotate_point((float(x), float(y)), img_wh=img_wh, k=rotate_k) for x, y in polygon]
@@ -125,13 +119,7 @@ def _fallback_block(mask: np.ndarray, rc: tuple[int, int], size: int) -> None:
     c1 = min(grid_size - 1, c0 + size - 1)
     mask[r0 : r1 + 1, c0 : c1 + 1] = 1
 
-def _make_target_mask(
-    specs: List[RoomSpec],
-    *,
-    grid_size: int = DEFAULT_GRID_SIZE,
-    img_wh: tuple[int, int] = (512, 512),
-    rotate_k: int = 0,
-) -> np.ndarray:
+def _make_target_mask(specs: List[RoomSpec], *, grid_size: int = DEFAULT_GRID_SIZE, img_wh: tuple[int, int] = (512, 512), rotate_k: int = 0) -> np.ndarray:
     """
     Build a target mask from true room polygons when available; fall back to compact
     blocks around a room's target cell if polygon data is missing.
@@ -163,13 +151,7 @@ def _make_target_mask(
 
     return mask
 
-def _make_room_masks(
-    specs: List[RoomSpec],
-    *,
-    grid_size: int = DEFAULT_GRID_SIZE,
-    img_wh: tuple[int, int] = (512, 512),
-    rotate_k: int = 0,
-) -> dict[str, np.ndarray]:
+def _make_room_masks(specs: List[RoomSpec], *, grid_size: int = DEFAULT_GRID_SIZE, img_wh: tuple[int, int] = (512, 512), rotate_k: int = 0) -> dict[str, np.ndarray]:
     """
     Build per-room masks when polygon data exists. Rooms without polygons are omitted.
     """
@@ -283,14 +265,7 @@ def _rooms_from_text_only(text: str, grid_size: int) -> tuple[list[RoomSpec], se
     return specs, active_names, active_target
 
 # ------------ main API ------------
-def encode_floorplan_to_grid(
-    floor_dir: Path,
-    grid_size: int = DEFAULT_GRID_SIZE,
-    *,
-    name_to_text_section: Optional[Dict[str, Section]] = None,  # from parser (optional)
-    rotate_k: int = ROTATE_IMAGE_K,  # multiples of 90 deg clockwise
-    text_override: str | None = None,
-) -> GridSample:
+def encode_floorplan_to_grid(floor_dir: Path, grid_size: int = DEFAULT_GRID_SIZE, *, name_to_text_section: Optional[Dict[str, Section]] = None, rotate_k: int = ROTATE_IMAGE_K, text_override: str | None = None) -> GridSample:
     """
     Build a grid sample from support text; if a processed floor_dir is provided the true mask
     is also loaded to guide realism scoring.

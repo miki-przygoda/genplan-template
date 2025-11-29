@@ -233,11 +233,7 @@ def section_to_cell(section: Section, grid_size: int = DEFAULT_GRID_SIZE) -> Tup
     }
     return centers.get(section, centers["C"])
 
-def section_bounds(
-    section: Section,
-    grid_size: int = DEFAULT_GRID_SIZE,
-    half_span: int | None = None,
-) -> tuple[int, int, int, int]:
+def section_bounds(section: Section, grid_size: int = DEFAULT_GRID_SIZE, half_span: int | None = None) -> tuple[int, int, int, int]:
     """
     Return an axis-aligned bounding box for a section.
     The box is centred on the section's representative cell but
@@ -251,12 +247,7 @@ def section_bounds(
     c1 = min(grid_size - 1, center_c + half)
     return r0, r1, c0, c1
 
-def placement_hint_from_sections(
-    rooms: Iterable[Room],
-    grid_size: int = DEFAULT_GRID_SIZE,
-    block_size: int | None = None,
-    base: int = 4,
-) -> Tuple[Dict[str, List[Tuple[int, int]]], Dict[str, List[List[Tuple[int, int]]]]]:
+def placement_hint_from_sections(rooms: Iterable[Room], grid_size: int = DEFAULT_GRID_SIZE, block_size: int | None = None, base: int = 4) -> Tuple[Dict[str, List[Tuple[int, int]]], Dict[str, List[List[Tuple[int, int]]]]]:
     """
     Given rooms with sections (from support text), build a coarse placement hint on a 32x32 grid
     plus a nested reference path per cell (coarse->fine across 4x4 tiles).
@@ -324,12 +315,7 @@ class RoomGraphBuilder:
         if room.section == "C":
             room.section = section
 
-    def add_relationship(
-        self,
-        src_descriptor: RoomDescriptor,
-        relationship: RoomToRoomRelationship,
-        dst_descriptor: RoomDescriptor,
-    ) -> None:
+    def add_relationship(self, src_descriptor: RoomDescriptor, relationship: RoomToRoomRelationship, dst_descriptor: RoomDescriptor) -> None:
         src_room = self.get_or_create_room(src_descriptor)
         dst_room = self.get_or_create_room(dst_descriptor)
         link_rooms(src_room, relationship, dst_room)

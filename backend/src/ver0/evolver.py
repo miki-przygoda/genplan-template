@@ -260,19 +260,7 @@ def reproduce(parents: list[Genome], cfg: EAConfig, rng: random.Random) -> list[
         offspring.append(Genome(layout=c2))
     return offspring
 
-def make_next_generation(
-    sample: GridSample,
-    population: list[Genome],
-    cfg: EAConfig,
-    rng: random.Random,
-    make_random: MakeRandomFn,
-    mutate_fn: MutateFn = mutate,
-    grow_mutate_fn: GrowMutateFn = grow_mutation,
-    mutation_rate: float | None = None,
-    fill_holes: bool = True,
-    enforce_conn: bool = False,
-    generation_index: int | None = None,
-) -> list[Genome]:
+def make_next_generation(sample: GridSample, population: list[Genome], cfg: EAConfig, rng: random.Random, make_random: MakeRandomFn, mutate_fn: MutateFn = mutate, grow_mutate_fn: GrowMutateFn = grow_mutation, mutation_rate: float | None = None, fill_holes: bool = True, enforce_conn: bool = False, generation_index: int | None = None) -> list[Genome]:
     """Create the next generation using elitism, tournament selection, crossover, and mutation.
     Assumes the incoming population already has fitness evaluated.
     """
@@ -303,14 +291,7 @@ def make_next_generation(
         new_population.append(Genome(layout=child_layout))
     return new_population
 
-def inject_diversity(
-    population: list[Genome],
-    sample: GridSample,
-    cfg: EAConfig,
-    rng: random.Random,
-    make_random: MakeRandomFn,
-    fraction: float,
-) -> bool:
+def inject_diversity(population: list[Genome], sample: GridSample, cfg: EAConfig, rng: random.Random, make_random: MakeRandomFn, fraction: float) -> bool:
     count = max(1, int(len(population) * max(0.0, min(1.0, fraction))))
     indexed = list(enumerate(population))
     indexed.sort(key=lambda pair: _fitness_value(pair[1]), reverse=True)
@@ -321,20 +302,7 @@ def inject_diversity(
         replaced = True
     return replaced
 
-def evolve(
-    sample: GridSample,
-    cfg: EAConfig = EAConfig(),
-    *,
-    make_random: MakeRandomFn = make_random_layout,
-    mutate_fn: MutateFn = mutate,
-    grow_mutate_fn: GrowMutateFn = grow_mutation,
-    stagnation_limit: int | None = None,
-    mean_plateau_window: int = 10,
-    mean_plateau_delta: float = 0.5,
-    best_plateau_window: int = 20,
-    best_plateau_delta: float = 0.1,
-    time_budget_s: float | None = None,
-) -> tuple[Genome, list[Genome], dict[str, list[float]]]:
+def evolve(sample: GridSample, cfg: EAConfig = EAConfig(), *, make_random: MakeRandomFn = make_random_layout, mutate_fn: MutateFn = mutate, grow_mutate_fn: GrowMutateFn = grow_mutation, stagnation_limit: int | None = None, mean_plateau_window: int = 10, mean_plateau_delta: float = 0.5, best_plateau_window: int = 20, best_plateau_delta: float = 0.1, time_budget_s: float | None = None) -> tuple[Genome, list[Genome], dict[str, list[float]]]:
     """
     Run the evolutionary algorithm and return:
       - best genome
@@ -373,12 +341,12 @@ def evolve(
         else:
             mutate_for_gen = mutate_fn
         if grow_mutate_fn is grow_mutation:
-            def _grow_wrapper(layout: CandidateLayout, rng: random.Random, targets: Dict[str, int], fill_holes_flag: bool = True, enforce_conn_flag: bool = False) -> None:
-                grow_mutation(layout, rng, targets, fill_holes=fill_holes_flag, enforce_conn=enforce_conn_flag)
+            def _grow_wrapper(layout: CandidateLayout, rng: random.Random, targets: Dict[str, int], fill_holes: bool = True, enforce_conn: bool = False) -> None:
+                grow_mutation(layout, rng, targets, fill_holes=fill_holes, enforce_conn=enforce_conn)
             grow_for_gen = _grow_wrapper
         else:
-            def _grow_wrapper(layout: CandidateLayout, rng: random.Random, targets: Dict[str, int], fill_holes_flag: bool = True, enforce_conn_flag: bool = False) -> None:
-                grow_mutate_fn(layout, rng, targets, fill_holes_flag, enforce_conn_flag)
+            def _grow_wrapper(layout: CandidateLayout, rng: random.Random, targets: Dict[str, int], fill_holes: bool = True, enforce_conn: bool = False) -> None:
+                grow_mutate_fn(layout, rng, targets, fill_holes=fill_holes, enforce_conn=enforce_conn)
             grow_for_gen = _grow_wrapper
 
         population = make_next_generation(

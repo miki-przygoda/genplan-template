@@ -203,17 +203,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def build_jobs(
-    *,
-    episodes: int,
-    use_fixed_floors: bool,
-    fixed_floors: Sequence[int],
-    bandit,
-    cfg_dict: Dict[str, Any],
-    project_root: Path,
-    grid_size: int,
-    rotate_k: int,
-) -> List[Tuple[int, int, str, Dict[str, Any], str, int, int]]:
+def build_jobs(*, episodes: int, use_fixed_floors: bool, fixed_floors: Sequence[int], bandit, cfg_dict: Dict[str, Any], project_root: Path, grid_size: int, rotate_k: int) -> List[Tuple[int, int, str, Dict[str, Any], str, int, int]]:
     jobs = []
     for ep in range(episodes):
         if use_fixed_floors and fixed_floors:
