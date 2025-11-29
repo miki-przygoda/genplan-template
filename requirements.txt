@@ -43,3 +43,4 @@ urllib3
 xxhash
 yarl
 seaborn
+scipy
