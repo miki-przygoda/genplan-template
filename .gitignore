@@ -62,8 +62,8 @@ Temporary Items
 .apdisk
 
 # Dataset files (large files)
-dataset/
-processed/
+backend/data/dataset/
+backend/data/processed/
 *.parquet
 *.arrow
 
@@ -79,3 +79,5 @@ htmlcov/
 .mypy_cache/
 .dmypy.json
 dmypy.json
+EAOutput
+.sh

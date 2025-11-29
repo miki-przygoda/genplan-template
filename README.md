@@ -1,157 +1,91 @@
-# genplan-template
+# Genplan Template — EA + RL Floorplan Experiments
 
-A template repository for generative AI floor plan research and coursework.
+A hybrid Evolutionary Algorithm + Reinforcement Learning system for generating constraint-aware architectural floorplans from natural-language instructions. The repo contains data preprocessing, reproducible RL/EA runners, and notebooks used to produce paper figures.
 
-## 🏗️ Project Structure
+## Repository layout
+- `backend/utils/`: data download and preprocessing (`run_full_preprocessing.py` orchestrates audit + mask generation).
+- `backend/src/ver0/`: core EA/RL logic  
+  - `evolver.py` (EA loop, restart/plateau logic), `mutator.py` (mutation/repair switches), `constraints.py` + `fitness.py` (scoring), `grid_encoder.py` (metadata → grids/masks), `rl_bandit.py` (epsilon-greedy seeding bandit), `rl_runner.py` (episode worker), `seeders.py` (initial layout strategies), `text_to_support_text.py` (NL → structured constraints), `vars.py` (defaults).
+- `backend/rl_training_remote/`: CLI entrypoints for long RL runs and remote-friendly EA comparisons (`cli.py`, `train_remote_ea_eval.py`, `push_rl_data.py`, `wipe_rl_memory.py`).
+- `backend/src/notebooks/`: analysis and training notebooks (`ver0/EANotebook.ipynb`, `ver0/RLTraining.ipynb`, `EA_Eval_Compare*.ipynb`, `rl_training_results.ipynb`).
+- Data: processed floor plans and audit artifacts in `backend/data/processed/`; bandit/log outputs in `backend/data/rl/`; EA comparison logs in `backend/data/ea-logs/json/`.
 
-```
-genplan-template/
-├── dataset/                    # Downloaded datasets (auto-created)
-│   ├── floor_plan_kaggle/     # G-list/floor_plan_kaggle
-│   ├── FloorPlans970Dataset/  # HamzaWajid1/FloorPlans970Dataset
-│   └── floorplan-SDXL/        # FahadIqbal5188/floorplan-SDXL
-├── processed/                 # Your processed data (create as needed)
-├── utils/
-│   └── data_loader.py        # Automated dataset downloader
-├── requirements.txt           # Python dependencies
-├── pyproject.toml            # Modern Python project configuration
-└── README.md                 # This file
-```
+## Environment
+- Python 3.11+ Recommended.
+- Install deps (OpenCV is headless; on some OSes you may need system `libGL`/`libglib` packages):
+  ```bash
+  python -m venv .venv
+  source .venv/bin/activate  # or .venv\\Scripts\\activate on Windows
+  pip install -r requirements.txt
+  ```
+  or via conda: Recomended
+  ```bash
+  conda create -n genplan python=3.11 -y
+  conda activate genplan
+  pip install -r requirements.txt
+  ```
 
-## 🚀 How It Works
-
-### 1. **Automated Dataset Download**
-The `utils/data_loader.py` script automatically:
-- Downloads 4 pre-configured floor plan datasets from Hugging Face
-- Organizes each dataset into its own folder
-- Creates the `dataset/` directory structure
-- Provides progress feedback and error handling
-
-### 2. **Standardized Workflow**
-- **Download**: Run the data loader to get all datasets
-- **Process**: Work with datasets in the `processed/` folder
-- **Maintain**: Keep consistent folder structure for team collaboration
-
-### 3. **Team Collaboration**
-- Each team member forks this repository
-- Maintains the same folder structure for easy comparison
-- Uses the same dataset organization system
-
-## 🛠️ Setup Instructions
-
-This project requires only the **Hugging Face Datasets** library and its core dependencies.
-
-### Option 1: Using Conda (Recommended)
-
-1. **Create a new conda environment:**
+## Fast start (10–15 minutes)
+1) **Prep data (download → audit → masks):**
    ```bash
-   conda create -n genai python=3.11 -y
+   python backend/utils/run_full_preprocessing.py --sample-count 0
    ```
+   - Downloads `HamzaWajid1/FloorPlans970Dataset` to `backend/data/dataset/` if missing.
+   - Writes processed floors to `backend/data/processed/floor_plans/floor###/` with `metadata.json`, `room_mask.png`, `overlay.png`.
+   - Rebuilds `backend/data/processed/no_text_ids.json` with samples lacking supporting text.
 
-2. **Activate the environment:**
+2) **Run a short RL+EA session (curses UI if TTY):**
    ```bash
-   conda activate genai
+   python -m backend.rl_training_remote \
+     --episodes 5 --gens 60 --population 50 \
+     --max-workers 4 --light-mutation --max-runtime-min 10
    ```
+   Outputs:
+   - bandit state `backend/data/rl/seed_bandit.json`
+   - per-episode log `backend/data/rl/episode_log.jsonl`
 
-3. **Install dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
+3) **Visualise results:** open `backend/src/notebooks/rl_training_results.ipynb` and point it at `backend/data/rl/episode_log.jsonl` (plots use log-scale fitness).
 
-### Option 2: Using Python venv
+## Data pipeline details
+- `backend/utils/run_full_preprocessing.py` stitches:
+  1. `data_loader.download_datasets()` — pulls the HF dataset to disk (safe to re-run).
+  2. `preprocessing_data_extract.run_data_audit()` — resolves column names, checks image sizes, records `no_text_ids.json`, and can export sample PNGs.
+  3. `data_formater.process_dataset()` — extracts polygons via OpenCV edge detection, builds room masks/overlays, and writes `metadata.json` (schema versioned, includes supporting text, room polygons/centroids, corner points).
+- Processed structure (one per floor, numbered): `backend/data/processed/floor_plans/floor###/{metadata.json,room_mask.png,overlay.png}`.
 
-1. **Create a virtual environment:**
-   ```bash
-   python -m venv genai-env
-   ```
+## Running experiments
+- **RL bandit training (primary entrypoint):**
+  - CLI: `python -m backend.rl_training_remote [--episodes N --gens G --population P ...]`
+  - Helpful flags: `--light-mutation` (skip heavy repairs), `--max-runtime-min` (wall clock cap), `--max-workers` (CPU throttle), `--no-ui` (print summaries), `--reset-state` (wipe prior state/logs), `--random-floors` or `--fixed-floors` (override floor cycle).
+  - Logs: `backend/data/rl/episode_log.jsonl`; bandit: `backend/data/rl/seed_bandit.json`.
+  - Maintenance: `backend/rl_training_remote/wipe_rl_memory.py` (delete state/log), `backend/rl_training_remote/push_rl_data.py --pull-rebase` (stage/commit/push RL artifacts).
 
-2. **Activate the environment:**
-   - On macOS/Linux:
-     ```bash
-     source genai-env/bin/activate
-     ```
-   - On Windows:
-     ```bash
-     genai-env\Scripts\activate
-     ```
+- **EA comparison batches (RL vs manual seeder):**
+  - `python backend/rl_training_remote/train_remote_ea_eval.py --runs 6 --max-workers 6`
+  - Writes paired EA histories to `backend/data/ea-logs/json/` with lightweight live status.
 
-3. **Install dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
+- **Notebooks (reproducibility + figures):**
+  - `backend/src/notebooks/ver0/RLTraining.ipynb`: mirrors the RL CLI with a fixed floor set (~77 ids) and log-scale plots.
+  - `backend/src/notebooks/ver0/EANotebook.ipynb`: manual EA runs with the same seeding registry and target floors.
+  - `backend/src/notebooks/EA_Eval_Compare*.ipynb`: paper-style RL-vs-manual comparisons.
 
-## 🎯 Getting Started
+## Key algorithmic components (for citing/inspection)
+- EA loop and restart/stagnation logic: `backend/src/ver0/evolver.py`
+- Constraint scoring and penalties (quadrant, overlap, compactness, adjacency, room usage, relationships, hole detection): `backend/src/ver0/constraints.py`
+- Fitness aggregation and realism gate: `backend/src/ver0/fitness.py`, `backend/src/ver0/real_plan_classifier.py`
+- Grid encoding of processed metadata to EA-ready tensors/masks: `backend/src/ver0/grid_encoder.py`
+- Mutations/repairs and light/heavy modes: `backend/src/ver0/mutator.py`
+- Seed selection bandit and seeding strategies: `backend/src/ver0/rl_bandit.py`, `backend/src/ver0/seeders.py`
+- Text-to-structure parser for supporting text: `backend/src/ver0/text_to_support_text.py`
 
-### Step 1: Download All Datasets
-```bash
-# Make sure your environment is activated
-conda activate genai  # or source genai-env/bin/activate
+## Testing and reproducibility
+- Unit tests: `pytest backend/tests/ver0` (grid encoder, constraints, text parsing).
+- RNG seeds: EA config seeds live in `backend/src/ver0/vars.py`; RL bandit state persists to `backend/data/rl/seed_bandit.json` for repeatability across runs.
 
-# Run the data loader
-python utils/data_loader.py
-```
-
-This will create the `dataset/` folder and download all 4 floor plan datasets.
-
-### Step 2: Explore Your Data
-```python
-from datasets import load_dataset
-import os
-
-# List available datasets
-dataset_folders = os.listdir("dataset")
-print("Available datasets:", dataset_folders)
-
-# Load a specific dataset
-dataset = load_dataset("dataset/floor_plan_kaggle")
-print(f"Dataset info: {dataset}")
-print(f"Number of samples: {len(dataset['train'])}")
-```
-
-### Step 3: Start Your Research
-- Create your processing scripts in the root directory
-- Save processed data to the `processed/` folder
-- Maintain the folder structure for team compatibility
-
-## 📦 Dependencies
-
-The project uses minimal dependencies focused on dataset handling:
-
-| Package | Purpose |
-|---------|---------|
-| `datasets` | Main Hugging Face datasets library |
-| `huggingface-hub` | For accessing Hugging Face Hub |
-| `pandas` | Data manipulation and analysis |
-| `pyarrow` | Fast data processing and storage |
-| `numpy` | Numerical computing |
-
-## 🤝 Team Workflow
-
-1. **Fork this repository**
-2. **Set up your environment** (see Setup Instructions)
-3. **Download datasets** using `python utils/data_loader.py`
-4. **Create your research scripts** while maintaining folder structure
-5. **Save processed data** to the `processed/` folder
-6. **Keep consistent naming** for easy team comparison
-
-## 📁 Folder Guidelines
-
-- **`dataset/`**: Downloaded datasets (auto-created, don't commit to git)
-- **`processed/`**: Your processed/cleaned data
-- **`utils/`**: Shared utility scripts
-- **Root**: Your main research scripts
-
-## 🔧 Troubleshooting
-
-**Import errors in IDE:**
-- Make sure your IDE is using the correct Python interpreter
-- In VS Code/Cursor: `Cmd+Shift+P` → "Python: Select Interpreter" → Choose your conda/venv environment
-
-**Dataset download issues:**
-- Check your internet connection
-- Ensure you have enough disk space
-- Some datasets may be large (several GB)
-
-**Environment issues:**
-- Make sure you've activated your environment before running scripts
-- Try `conda activate genai` or `source genai-env/bin/activate`
+## Frequently used paths
+- Processed floors: `backend/data/processed/floor_plans/`
+- Missing-text ids: `backend/data/processed/no_text_ids.json`
+- RL state/logs: `backend/data/rl/seed_bandit.json`, `backend/data/rl/episode_log.jsonl`
+- EA comparison logs: `backend/data/ea-logs/json/`
+- Remote RL CLI entrypoint: `backend/rl_training_remote/cli.py`
+- EA/RL core code: `backend/src/ver0/`
