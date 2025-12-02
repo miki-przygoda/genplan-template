@@ -44,3 +44,4 @@ xxhash
 yarl
 seaborn
 scipy
+Jinja2
