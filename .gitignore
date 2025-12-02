@@ -81,3 +81,6 @@ htmlcov/
 dmypy.json
 EAOutput
 .sh
+
+# Eval data
+backend/data/figures/
