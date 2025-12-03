@@ -9,6 +9,7 @@ A hybrid Evolutionary Algorithm + Reinforcement Learning system for generating c
 - `backend/rl_training_remote/`: CLI entrypoints for long RL runs and remote-friendly EA comparisons (`cli.py`, `train_remote_ea_eval.py`, `push_rl_data.py`, `wipe_rl_memory.py`).
 - `backend/src/notebooks/`: analysis and training notebooks (`ver0/EANotebook.ipynb`, `ver0/RLTraining.ipynb`, `EA_Eval_Compare*.ipynb`, `rl_training_results.ipynb`).
 - Data: processed floor plans and audit artifacts in `backend/data/processed/`; bandit/log outputs in `backend/data/rl/`; EA comparison logs in `backend/data/ea-logs/json/`.
+- `papers/`: Currently includes a formal coursework summary of this system. (A full academic publication is planned, once completed will be added to the codebase.)
 
 ## Environment
 - Python 3.11+ Recommended.
