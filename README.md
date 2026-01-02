@@ -90,3 +90,11 @@ A hybrid Evolutionary Algorithm + Reinforcement Learning system for generating c
 - EA comparison logs: `backend/data/ea-logs/json/`
 - Remote RL CLI entrypoint: `backend/rl_training_remote/cli.py`
 - EA/RL core code: `backend/src/ver0/`
+
+### Robustness & Empirical Rigor
+- Large-Scale Validation: This repository includes the infrastructure for paired experimental runs across the FloorPlans970Dataset. The findings are based on a study of 500 paired runs (1,000 total episodes) to ensure statistical significance.
+
+- Constraint Enforcement: The constraints.py and mutator.py modules implement a "hard-boundary" approach to optimization, ensuring that the stochastic search process respects geometric and functional safety requirements (e.g., non-overlap, adjacency, and mask conformity).
+
+- Variance Reduction: A core goal of the RL-assisted seeding was to reduce outcome variance, making the generative process more predictable and reliable across different initial states.
+
