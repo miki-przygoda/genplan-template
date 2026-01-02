@@ -93,8 +93,9 @@ A hybrid Evolutionary Algorithm + Reinforcement Learning system for generating c
 
 ### Robustness & Empirical Rigor
 - Large-Scale Validation: This repository includes the infrastructure for paired experimental runs across the FloorPlans970Dataset. The findings are based on a study of 500 paired runs (1,000 total episodes) to ensure statistical significance.
-
 - Constraint Enforcement: The constraints.py and mutator.py modules implement a "hard-boundary" approach to optimization, ensuring that the stochastic search process respects geometric and functional safety requirements (e.g., non-overlap, adjacency, and mask conformity).
-
 - Variance Reduction: A core goal of the RL-assisted seeding was to reduce outcome variance, making the generative process more predictable and reliable across different initial states.
 
+### Current Limitations
+- Optimization Bottlenecks: The RL agent currently optimizes initialization; however, the EA can still stagnate in complex local optima for highly irregular floor-plan masks.
+- Fitness Scaling: The current fitness function uses weighted linear aggregation; future iterations could explore multi-objective Pareto optimization to better handle conflicting constraints.
